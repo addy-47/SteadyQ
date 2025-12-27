@@ -1,0 +1,9 @@
+{
+  "fail": 0,
+  "p50_service": 4207,
+  "p99_service": 27935,
+  "p99_total": 28495,
+  "rps_target": 100,
+  "success": 5001,
+  "total_requests": 5001
+}
