@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -10,7 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"steadyq/internal/runner"
-	"steadyq/internal/storage"
 	"steadyq/internal/tui/styles"
 	"steadyq/internal/tui/views"
 )
@@ -29,14 +27,12 @@ type ViewID int
 const (
 	ViewRunner ViewID = iota
 	ViewDashboard
-	ViewHistory
 )
 
 type StatsMsg runner.StatsSnapshot
 
 type Model struct {
 	Runner  *runner.Runner
-	Store   *storage.Store
 	Updates runner.StatsUpdateChan
 
 	// Core State
@@ -51,23 +47,20 @@ type Model struct {
 	CurrentView ViewID
 	MenuItems   []string
 
-	RunnerView  views.RunnerView
-	DashView    views.DashboardView
-	HistoryView views.HistoryView
+	RunnerView views.RunnerView
+	DashView   views.DashboardView
 
 	// Feedback
 	StatusMsg string
 }
 
-func NewModel(r *runner.Runner, updates runner.StatsUpdateChan, store *storage.Store) Model {
+func NewModel(r *runner.Runner, updates runner.StatsUpdateChan) Model {
 	return Model{
 		Runner:      r,
 		Updates:     updates,
-		Store:       store,
 		CurrentView: ViewRunner,
-		MenuItems:   []string{"[1] New Run", "[2] Dashboard", "[3] History"},
+		MenuItems:   []string{"[1] New Run", "[2] Dashboard"},
 		RunnerView:  views.NewRunnerView(r.Cfg),
-		HistoryView: views.NewHistoryView(store),
 	}
 }
 
@@ -102,21 +95,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.CurrentView = ViewDashboard
 			return m, nil
 
-		case "ctrl+h": // History
-			m.HistoryView.Refresh()
-			m.CurrentView = ViewHistory
-			return m, nil
-
 		case "ctrl+right":
 			m.CurrentView++
-			if m.CurrentView > ViewHistory {
+			if m.CurrentView > ViewDashboard {
 				m.CurrentView = ViewRunner
 			}
 			return m, nil
 		case "ctrl+left":
 			m.CurrentView--
 			if m.CurrentView < ViewRunner {
-				m.CurrentView = ViewHistory
+				m.CurrentView = ViewDashboard
 			}
 			return m, nil
 		// Removed 1, 2, 3 to allow numeric input
@@ -133,49 +121,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.RunActive && m.RunCancel != nil {
 				m.RunCancel()
 				m.RunActive = false
-				m.saveHistory()
-				m.CurrentView = ViewHistory
-				m.HistoryView.Refresh()
 			}
 			return m, nil
-
-		case "ctrl+p": // Export
-			if m.CurrentView == ViewDashboard || m.CurrentView == ViewHistory {
-				// ... export logic ...
-				if m.CurrentView == ViewDashboard {
-					// Export Current Run
-					if len(m.Runner.Results) > 0 {
-						ts := time.Now().Format("20060102-150405")
-						base := fmt.Sprintf("steadyq_report_%s", ts)
-						if err := ExportCSV(m.Runner.Results, base+".csv"); err == nil {
-							ExportJSON(m.Runner.Results, base+".json")
-							m.StatusMsg = fmt.Sprintf("Exported to %s.{csv,json}", base)
-							cmds = append(cmds, clearStatusCmd())
-						} else {
-							m.StatusMsg = fmt.Sprintf("Export Failed: %v", err)
-							cmds = append(cmds, clearStatusCmd())
-						}
-					} else {
-						m.StatusMsg = "No results to export yet."
-						cmds = append(cmds, clearStatusCmd())
-					}
-				} else if m.CurrentView == ViewHistory {
-					item := m.HistoryView.GetSelectedItem()
-					if item != nil {
-						// Export History Item
-						base := fmt.Sprintf("steadyq_history_%s", item.ID)
-						if err := ExportCSV(item.Results, base+".csv"); err == nil {
-							ExportJSON(item.Results, base+".json")
-							m.StatusMsg = fmt.Sprintf("Exported history to %s.{csv,json}", base)
-							cmds = append(cmds, clearStatusCmd())
-						} else {
-							m.StatusMsg = fmt.Sprintf("Export Failed: %v", err)
-							cmds = append(cmds, clearStatusCmd())
-						}
-					}
-				}
-				return m, tea.Batch(cmds...)
-			}
 		}
 
 		// 3. FALLTHROUGH: VIEW SPECIFIC UPDATE
@@ -193,13 +140,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.DashView.Width = m.Width
 		m.DashView.Height = contentHeight
 
-		m.HistoryView.Width = m.Width
-		m.HistoryView.Height = contentHeight
-
 		updatedDash, _ := m.DashView.Update(msg)
 		m.DashView = updatedDash
-		updatedHist, _ := m.HistoryView.Update(msg)
-		m.HistoryView = updatedHist
 
 	case StatsMsg:
 		snap := runner.StatsSnapshot(msg)
@@ -215,11 +157,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.RunCancel != nil {
 				m.RunCancel()
 			}
-			m.saveHistory() // Autosave on completion
-
-			// Auto Redirect to History
-			m.CurrentView = ViewHistory
-			m.HistoryView.Refresh()
+			m.StatusMsg = "Test Completed."
 		}
 
 		cmds = append(cmds, waitForUpdate(m.Updates))
@@ -233,15 +171,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.RunnerView, defaultCmd = m.RunnerView.Update(msg)
 	case ViewDashboard:
 		m.DashView, defaultCmd = m.DashView.Update(msg)
-	case ViewHistory:
-		var hCmd tea.Cmd
-		m.HistoryView, hCmd = m.HistoryView.Update(msg)
-		defaultCmd = hCmd
-		if m.HistoryView.SelectedConfig != nil {
-			m.RunnerView = views.NewRunnerView(*m.HistoryView.SelectedConfig)
-			m.HistoryView.SelectedConfig = nil
-			m.CurrentView = ViewRunner
-		}
 	}
 	cmds = append(cmds, defaultCmd)
 
@@ -272,32 +201,6 @@ func (m *Model) startRun(cfg runner.Config) {
 	go m.Runner.Run(ctx)
 }
 
-func (m Model) saveHistory() {
-	if m.Store == nil {
-		return
-	}
-	item := storage.HistoryItem{
-		ID:        fmt.Sprintf("%d", time.Now().Unix()),
-		Timestamp: time.Now(),
-		Config:    m.Runner.Cfg,
-		Summary: storage.RunSummary{
-			TotalRequests: m.Runner.Stats.Requests,
-			Success:       m.Runner.Stats.Success,
-			Fail:          m.Runner.Stats.Fail,
-			AvgLatencyMs:  m.Runner.Stats.ServiceTime.Mean() / 1000.0,
-			P99LatencyMs:  m.Runner.Stats.GetP99Service(),
-		},
-		Results: m.Runner.Results,
-	}
-	err := m.Store.Save(item)
-	if err != nil {
-		m.StatusMsg = fmt.Sprintf("Error saving history: %v", err)
-	} else {
-		m.StatusMsg = "History saved."
-	}
-	m.HistoryView.Refresh()
-}
-
 func (m Model) View() string {
 	if m.Width == 0 {
 		return "Loading..."
@@ -319,8 +222,6 @@ func (m Model) View() string {
 		contentStr = m.RunnerView.View()
 	case ViewDashboard:
 		contentStr = m.DashView.View()
-	case ViewHistory:
-		contentStr = m.HistoryView.View()
 	}
 
 	// Adjust height for larger footer
@@ -338,14 +239,12 @@ func (m Model) View() string {
 	keys2 := []string{
 		styles.RenderKey("Ctrl+R", "Run"),
 		styles.RenderKey("Ctrl+S", "Stop"),
-		styles.RenderKey("Ctrl+P", "Export"),
 		styles.RenderKey("Ctrl+Q", "Quit"),
 	}
 
 	// Row 3: Shortcuts
 	keys3 := []string{
 		styles.RenderKey("Ctrl+D", "Dash"),
-		styles.RenderKey("Ctrl+H", "Hist"),
 	}
 
 	helpRow1 := styles.FooterBase.Width(m.Width).Render(strings.Join(keys1, "   "))

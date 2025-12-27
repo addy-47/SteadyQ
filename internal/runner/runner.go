@@ -38,6 +38,7 @@ type StatsSnapshot struct {
 	AvgQueueWaitMs float64
 
 	StatusCodes map[int]int
+	ErrorCounts map[string]int
 }
 
 // StatsUpdateChan is the channel type
@@ -118,6 +119,7 @@ func (r *Runner) sendUpdate() {
 		MeanServiceMs:  r.Stats.ServiceTime.Mean() / 1000,
 		AvgQueueWaitMs: r.Stats.QueueWaitAvgMs(),
 		StatusCodes:    r.Stats.GetStatusCodes(),
+		ErrorCounts:    r.Stats.GetErrorCounts(),
 	}
 
 	// Non-blocking send
@@ -340,6 +342,11 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 		}
 	}
 
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+
 	r.Stats.Add(
 		res.Success,
 		uint64(res.Bytes),
@@ -347,6 +354,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 		res.QueueWait,
 		res.Latency,
 		res.Status,
+		errStr,
 	)
 
 	r.mu.Lock()

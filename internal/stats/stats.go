@@ -28,6 +28,7 @@ type Stats struct {
 	// Let's use a Mutex for now, simplistic.
 	muCodes     sync.Mutex
 	StatusCodes map[int]int
+	ErrorCounts map[string]int
 }
 
 func NewStats() *Stats {
@@ -35,6 +36,7 @@ func NewStats() *Stats {
 		ServiceTime: NewSafeHistogram(),
 		TotalTime:   NewSafeHistogram(),
 		StatusCodes: make(map[int]int),
+		ErrorCounts: make(map[string]int),
 	}
 }
 
@@ -50,10 +52,11 @@ func (s *Stats) Reset() {
 
 	s.muCodes.Lock()
 	s.StatusCodes = make(map[int]int)
+	s.ErrorCounts = make(map[string]int) // Reset errors
 	s.muCodes.Unlock()
 }
 
-func (s *Stats) Add(res bool, bytes uint64, service, queue, total time.Duration, code int) {
+func (s *Stats) Add(res bool, bytes uint64, service, queue, total time.Duration, code int, errStr string) { // Changed signature
 	atomic.AddUint64(&s.Requests, 1)
 	if res {
 		atomic.AddUint64(&s.Success, 1)
@@ -70,6 +73,9 @@ func (s *Stats) Add(res bool, bytes uint64, service, queue, total time.Duration,
 	// Update Codes
 	s.muCodes.Lock()
 	s.StatusCodes[code]++
+	if errStr != "" {
+		s.ErrorCounts[errStr]++
+	}
 	s.muCodes.Unlock()
 }
 
@@ -88,6 +94,16 @@ func (s *Stats) GetStatusCodes() map[int]int {
 	// Copy to avoid race
 	copy := make(map[int]int)
 	for k, v := range s.StatusCodes {
+		copy[k] = v
+	}
+	return copy
+}
+
+func (s *Stats) GetErrorCounts() map[string]int {
+	s.muCodes.Lock()
+	defer s.muCodes.Unlock()
+	copy := make(map[string]int)
+	for k, v := range s.ErrorCounts {
 		copy[k] = v
 	}
 	return copy

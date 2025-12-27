@@ -8,7 +8,6 @@ import (
 
 	"steadyq/internal/dummy"
 	"steadyq/internal/runner"
-	"steadyq/internal/storage"
 	"steadyq/internal/tui/app"
 )
 
@@ -37,12 +36,7 @@ func main() {
 		}
 	}
 	// 1. Initialize dependencies
-	store, err := storage.NewStore()
-	if err != nil {
-		fmt.Printf("Fatal: Could not load persistence: %v\n", err)
-		os.Exit(1)
-	}
-	defer store.Close()
+	// History removed as per request
 
 	// 2. Setup Default Runner (Idle)
 	defaultCfg := runner.Config{
@@ -55,7 +49,7 @@ func main() {
 	run := runner.NewRunner(defaultCfg, updates)
 
 	// 3. Launch TUI Application
-	m := app.NewModel(run, updates, store)
+	m := app.NewModel(run, updates)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

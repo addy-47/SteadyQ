@@ -222,6 +222,30 @@ func (m DashboardView) View() string {
 		}
 	}
 
+	// --- Error Detail Breakdown ---
+	if len(m.Stats.ErrorCounts) > 0 {
+		s.WriteString("\n")
+		s.WriteString(styles.Subtle.Render("Error Details"))
+		s.WriteString("\n")
+
+		// Sort keys
+		var errs []string
+		for k := range m.Stats.ErrorCounts {
+			errs = append(errs, k)
+		}
+		sort.Strings(errs)
+
+		for _, e := range errs {
+			count := m.Stats.ErrorCounts[e]
+			// Truncate error if too long
+			dispErr := e
+			if len(dispErr) > 40 {
+				dispErr = dispErr[:37] + "..."
+			}
+			s.WriteString(fmt.Sprintf("%s %s\n", styles.Error.Render(fmt.Sprintf("%d x", count)), dispErr))
+		}
+	}
+
 	return styles.Panel.Width(m.Width - 2).Render(s.String())
 }
 

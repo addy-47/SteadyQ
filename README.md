@@ -10,7 +10,6 @@ SteadyQ is a modern, TUI-based load testing tool designed for developers who nee
   - **RPS (Open Loop)**: Target a specific Requests Per Second.
   - **Users (Closed Loop)**: Simulate fixed concurrent users with think time.
 - **Real-time Dashboard**: Visualize latency, throughput, and errors live.
-- **History & Export**: Auto-saves run history; replay previous configs or export results to JSON/CSV.
 
 ## 📦 Installation
 
@@ -38,17 +37,16 @@ steadyq
 
 ### Key Bindings
 
-| Key                 | Action                                    |
-| :------------------ | :---------------------------------------- |
-| `Ctrl+Left/Right`   | Switch Views (Runner, Dashboard, History) |
-| `Tab` / `Shift+Tab` | Navigate Fields                           |
-| `Enter`             | Edit Field / Select History Item          |
-| `Space`             | Toggle Modes (RPS/Users, HTTP/Script)     |
-| `Ctrl+R`            | **Run** Test                              |
-| `Ctrl+S`            | **Stop** Test                             |
-| `Ctrl+H`            | Go to History                             |
-| `Ctrl+D`            | Go to Dashboard                           |
-| `Ctrl+Q`            | Quit                                      |
+| Key                 | Action                                |
+| :------------------ | :------------------------------------ |
+| `Ctrl+Left/Right`   | Switch Views (Runner, Dashboard)      |
+| `Tab` / `Shift+Tab` | Navigate Fields                       |
+| `Enter`             | Edit Field                            |
+| `Space`             | Toggle Modes (RPS/Users, HTTP/Script) |
+| `Ctrl+R`            | **Run** Test                          |
+| `Ctrl+S`            | **Stop** Test                         |
+| `Ctrl+D`            | Go to Dashboard                       |
+| `Ctrl+Q`            | Quit                                  |
 
 ## 🛠 Configuration
 
