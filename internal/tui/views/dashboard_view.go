@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,16 +11,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"steadyq/internal/runner"
-	"steadyq/internal/tui/components"
 	"steadyq/internal/tui/styles"
 )
 
 type DashboardView struct {
 	Stats    runner.StatsSnapshot
 	Progress progress.Model
-
-	RpsLine     components.Sparkline
-	LatencyLine components.Sparkline
+	Config   runner.Config
 
 	StartTime  time.Time
 	Duration   time.Duration
@@ -30,83 +28,55 @@ type DashboardView struct {
 	Height int
 }
 
-func NewDashboardView(totalDur time.Duration) DashboardView {
-	slRps := components.NewSparkline(
-		40, 1,
-		"RPS (Active)",
-		styles.Active,
-	)
+func NewDashboardView(cfg runner.Config) DashboardView {
+	totalDur := time.Duration(cfg.RampUp+cfg.SteadyDur+cfg.RampDown) * time.Second
 
-	slLat := components.NewSparkline(
-		40, 1,
-		"Latency P90 (ms)",
-		styles.Warn, // Gold for Latency
+	// Gradient Progress Bar
+	prog := progress.New(
+		progress.WithGradient("#7D56F4", "#04B575"),
+		progress.WithWidth(40),
+		progress.WithoutPercentage(),
 	)
 
 	return DashboardView{
-		Progress:    progress.New(progress.WithDefaultGradient()),
-		RpsLine:     slRps,
-		LatencyLine: slLat,
-		StartTime:   time.Now(),
-		Duration:    totalDur,
-		LastUpdate:  time.Now(),
+		Progress:   prog,
+		Config:     cfg,
+		StartTime:  time.Now(),
+		Duration:   totalDur,
+		LastUpdate: time.Now(),
 	}
 }
 
 func (m DashboardView) Init() tea.Cmd {
-	return nil
+	return nil // Progress might need tick? Usually handled by Update frame
 }
 
 func (m DashboardView) Update(msg tea.Msg) (DashboardView, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case runner.StatsSnapshot:
-		now := time.Now()
-		dt := now.Sub(m.LastUpdate).Seconds()
-		if dt < 0.01 {
-			dt = 0.01
-		}
-
-		// 1. Calculate RPS
-		deltaReqs := msg.Requests - m.LastReqs
-		rps := float64(deltaReqs) / dt
-
-		// 2. Update Sparklines
-		m.RpsLine.Add(uint64(rps))
-		m.LatencyLine.Add(uint64(msg.P90ServiceMs))
-
-		// 3. Update State
+		m.LastUpdate = time.Now()
 		m.Stats = msg
-		m.LastReqs = msg.Requests
-		m.LastUpdate = now
 
-		// 4. Update Progress
-		// Calculate elapsed based on actual start time, or approximate?
-		// We'll reset StartTime when dashboard is "Started" properly?
-		// For now assume it flows.
 		elapsed := time.Since(m.StartTime)
 		pct := float64(elapsed) / float64(m.Duration)
 		if pct > 1.0 {
 			pct = 1.0
 		}
-		cmd := m.Progress.SetPercent(pct)
+		cmd = m.Progress.SetPercent(pct)
 		return m, cmd
 
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
-		m.Progress.Width = msg.Width - 4
-
-		half := (msg.Width / 2) - 4
-		if half < 10 {
-			half = 10
-		}
-		m.RpsLine.Width = half
-		m.LatencyLine.Width = half
-		return m, nil
+		m.Progress.Width = msg.Width - 10
 
 	case progress.FrameMsg:
-		prog, cmd := m.Progress.Update(msg)
-		m.Progress = prog.(progress.Model)
+		newModel, cmd := m.Progress.Update(msg)
+		if newModel, ok := newModel.(progress.Model); ok {
+			m.Progress = newModel
+		}
 		return m, cmd
 	}
 
@@ -116,61 +86,147 @@ func (m DashboardView) Update(msg tea.Msg) (DashboardView, tea.Cmd) {
 func (m DashboardView) View() string {
 	s := strings.Builder{}
 
-	s.WriteString(styles.Title.Render("📊 Live Dashboard"))
+	// --- Header ---
+	elapsed := time.Since(m.StartTime)
+	remaining := m.Duration - elapsed
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	// Determine Phase
+	phase := "Steady State"
+	rupEnd := time.Duration(m.Config.RampUp) * time.Second
+	steadyEnd := rupEnd + time.Duration(m.Config.SteadyDur)*time.Second
+
+	if elapsed < rupEnd {
+		phase = "Ramp Up"
+	} else if elapsed > steadyEnd {
+		phase = "Ramp Down"
+	}
+
+	timer := fmt.Sprintf("%s / %s", elapsed.Round(time.Second), remaining.Round(time.Second))
+	header := lipgloss.JoinHorizontal(lipgloss.Center,
+		styles.Title.Render("⚡ Testing in Progress"),
+		lipgloss.NewStyle().MarginLeft(2).Foreground(styles.ColorSubtle).Render(timer),
+		lipgloss.NewStyle().MarginLeft(4).Foreground(styles.ColorPrimary).Bold(true).Render("["+phase+"]"),
+	)
+	s.WriteString(header)
 	s.WriteString("\n\n")
 
-	// Top Grid: Metrics
-	// We want big boxes.
+	// --- Progress ---
+	s.WriteString(m.Progress.View())
+	s.WriteString("\n\n")
 
-	reqs := m.Stats.Requests
-	inflight := m.Stats.Inflight
-	errRate := 0.0
-	if reqs > 0 {
-		errRate = (float64(m.Stats.Fail) / float64(reqs)) * 100
+	// --- Metrics Grid ---
+	// Row 1: Volume
+	reqsVal := styles.Value.Render(fmt.Sprintf("%d", m.Stats.Requests))
+	rps := 0.0
+	if elapsed.Seconds() > 0 {
+		rps = float64(m.Stats.Requests) / elapsed.Seconds()
 	}
+	rpsVal := styles.Value.Render(fmt.Sprintf("%.1f", rps))
+	inflightVal := styles.Active.Render(fmt.Sprintf("%d", m.Stats.Inflight))
 
-	// Styles
-	styleErr := styles.Active
-	if errRate > 1.0 {
-		styleErr = styles.Warn
+	// Target display
+	targetStr := fmt.Sprintf("%d RPS", m.Config.TargetRPS)
+	if m.Config.Mode == "users" {
+		targetStr = fmt.Sprintf("%d Users", m.Config.NumUsers)
 	}
-	if errRate > 5.0 {
-		styleErr = styles.Error
-	}
+	targetVal := styles.Subtle.Render(targetStr)
 
-	renderMetric := func(label, value string, style lipgloss.Style) string {
-		return styles.Box.Render(
-			fmt.Sprintf("%s\n%s", styles.Subtle.Render(label), style.Render(value)),
-		)
-	}
-
-	// Row 1
 	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
-		renderMetric("Requests", fmt.Sprintf("%d", reqs), styles.Active),
-		renderMetric("Inflight", fmt.Sprintf("%d", inflight), styles.Active),
-		renderMetric("Errors", fmt.Sprintf("%.2f%% (%d)", errRate, m.Stats.Fail), styleErr),
+		MakeCard("Requests", reqsVal),
+		MakeCard("Avg RPS", rpsVal),
+		MakeCard("Inflight", inflightVal),
+		MakeCard("Target", targetVal),
 	)
 	s.WriteString(row1)
 	s.WriteString("\n")
 
-	// Row 2: Latency
+	// Row 2: Latency Percentiles
+	p50Val := styles.Text.Render(fmt.Sprintf("%.1f ms", m.Stats.P50ServiceMs))
+	p90Val := styles.Text.Render(fmt.Sprintf("%.1f ms", m.Stats.P90ServiceMs))
+	p95Val := styles.Warn.Render(fmt.Sprintf("%.1f ms", m.Stats.P95ServiceMs))
+	p99Val := styles.Error.Render(fmt.Sprintf("%.1f ms", m.Stats.P99ServiceMs))
+
 	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
-		renderMetric("P50 Latency", fmt.Sprintf("%.2f ms", m.Stats.P50ServiceMs), styles.Active),
-		renderMetric("P90 Latency", fmt.Sprintf("%.2f ms", m.Stats.P90ServiceMs), styles.Warn),
-		renderMetric("P99 Latency", fmt.Sprintf("%.2f ms", m.Stats.P99ServiceMs), styles.Warn),
+		MakeCard("P50 Latency", p50Val),
+		MakeCard("P90 Latency", p90Val),
+		MakeCard("P95 Latency", p95Val),
+		MakeCard("P99 Latency", p99Val),
 	)
 	s.WriteString(row2)
+	s.WriteString("\n")
+
+	// Row 3: Others
+	meanVal := styles.Text.Render(fmt.Sprintf("%.1f ms", m.Stats.MeanServiceMs))
+	maxVal := styles.Text.Render(fmt.Sprintf("%d ms", m.Stats.MaxServiceMs))
+
+	errColor := styles.Text
+	if m.Stats.Fail > 0 {
+		errColor = styles.Error
+	}
+	failVal := errColor.Render(fmt.Sprintf("%d", m.Stats.Fail))
+
+	row3 := lipgloss.JoinHorizontal(lipgloss.Top,
+		MakeCard("Mean Latency", meanVal),
+		MakeCard("Max Latency", maxVal),
+		MakeCard("Errors", failVal),
+	)
+	s.WriteString(row3)
 	s.WriteString("\n\n")
 
-	// Sparklines
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-		styles.Box.Render(m.RpsLine.View()),
-		styles.Box.Render(m.LatencyLine.View()),
-	))
-	s.WriteString("\n\n")
+	// --- Response Codes ---
+	if len(m.Stats.StatusCodes) > 0 {
+		s.WriteString(styles.Subtle.Render("Response Breakdown"))
+		s.WriteString("\n")
 
-	// Progress
-	s.WriteString(m.Progress.View())
+		var codes []int
+		for k := range m.Stats.StatusCodes {
+			codes = append(codes, k)
+		}
+		sort.Ints(codes)
 
-	return s.String()
+		barWidth := 30
+		maxCount := 0
+		for _, c := range m.Stats.StatusCodes {
+			if c > maxCount {
+				maxCount = c
+			}
+		}
+
+		for _, c := range codes {
+			count := m.Stats.StatusCodes[c]
+			// Simple bar
+			w := 0
+			if maxCount > 0 {
+				w = int((float64(count) / float64(maxCount)) * float64(barWidth))
+			}
+			bar := strings.Repeat("█", w)
+
+			// Formatting
+			codeStr := fmt.Sprintf("%d", c)
+			if c == 0 {
+				codeStr = "ERR"
+			}
+
+			color := styles.Value
+			if c == 0 || c >= 500 {
+				color = styles.Error
+			} else if c >= 400 {
+				color = styles.Warn
+			}
+
+			line := fmt.Sprintf("%3s : %s %d", codeStr, color.Render(bar), count)
+			s.WriteString(line + "\n")
+		}
+	}
+
+	return styles.Panel.Width(m.Width - 2).Render(s.String())
+}
+
+func MakeCard(title, value string) string {
+	return styles.Box.Width(18).Align(lipgloss.Center).Render(
+		fmt.Sprintf("%s\n%s", styles.Subtle.Render(title), value),
+	)
 }

@@ -15,6 +15,14 @@ import (
 	"steadyq/internal/tui/views"
 )
 
+type ClearStatusMsg struct{}
+
+func clearStatusCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(_ time.Time) tea.Msg {
+		return ClearStatusMsg{}
+	})
+}
+
 // View Enum
 type ViewID int
 
@@ -24,50 +32,31 @@ const (
 	ViewHistory
 )
 
-// StatsMsg wrapper
 type StatsMsg runner.StatsSnapshot
 
 type Model struct {
-	// Global State
 	Runner  *runner.Runner
 	Store   *storage.Store
 	Updates runner.StatsUpdateChan
+
+	// Core State
+	RunActive bool
+	RunCtx    context.Context // To cancel run
+	RunCancel context.CancelFunc
 
 	// Layout
 	Width  int
 	Height int
 
-	// Navigation
 	CurrentView ViewID
 	MenuItems   []string
-	RunActive   bool
 
-	// Views
 	RunnerView  views.RunnerView
 	DashView    views.DashboardView
 	HistoryView views.HistoryView
-}
 
-func (m Model) saveHistory() {
-	if m.Store == nil {
-		return
-	}
-
-	item := storage.HistoryItem{
-		ID:        fmt.Sprintf("%d", time.Now().Unix()),
-		Timestamp: time.Now(),
-		Config:    m.Runner.Cfg,
-		Summary: storage.RunSummary{
-			TotalRequests: m.Runner.Stats.Requests,
-			Success:       m.Runner.Stats.Success,
-			Fail:          m.Runner.Stats.Fail,
-			AvgLatencyMs:  m.Runner.Stats.ServiceTime.Mean() / 1000.0,
-			P99LatencyMs:  m.Runner.Stats.GetP99Service(),
-		},
-	}
-	m.Store.Save(item)
-	// Refresh history view if it exists
-	m.HistoryView.Refresh()
+	// Feedback
+	StatusMsg string
 }
 
 func NewModel(r *runner.Runner, updates runner.StatsUpdateChan, store *storage.Store) Model {
@@ -76,7 +65,7 @@ func NewModel(r *runner.Runner, updates runner.StatsUpdateChan, store *storage.S
 		Updates:     updates,
 		Store:       store,
 		CurrentView: ViewRunner,
-		MenuItems:   []string{"New Test", "Dashboard", "History"},
+		MenuItems:   []string{"[1] New Run", "[2] Dashboard", "[3] History"},
 		RunnerView:  views.NewRunnerView(r.Cfg),
 		HistoryView: views.NewHistoryView(store),
 	}
@@ -96,62 +85,116 @@ func waitForUpdate(sub runner.StatsUpdateChan) tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case ClearStatusMsg:
+		m.StatusMsg = ""
+		return m, nil
+
 	case tea.KeyMsg:
-		// Global Keys
+		// 1. GLOBAL NAVIGATION & CONTROL (Prioritized)
 		switch msg.String() {
-		case "ctrl+c":
-			m.Runner.Stats.Reset() // Hacky: stop runner? No, just quit.
-			// Ideally cancel context.
+		case "ctrl+c", "ctrl+q": // Removed "q" to allow typing
 			return m, tea.Quit
-		case "f1":
-			m.CurrentView = ViewRunner
-			return m, nil
-		case "f2":
+
+		case "ctrl+d": // Dashboard
 			m.CurrentView = ViewDashboard
 			return m, nil
-		case "f3":
+
+		case "ctrl+h": // History
+			m.HistoryView.Refresh()
 			m.CurrentView = ViewHistory
-			m.HistoryView.Refresh() // Refresh on enter
 			return m, nil
-		}
 
-		// View Specific Handling
-		if m.CurrentView == ViewRunner {
-			if msg.String() == "enter" && m.RunnerView.Focus >= 3 {
-				// START TEST
+		case "ctrl+right":
+			m.CurrentView++
+			if m.CurrentView > ViewHistory {
+				m.CurrentView = ViewRunner
+			}
+			return m, nil
+		case "ctrl+left":
+			m.CurrentView--
+			if m.CurrentView < ViewRunner {
+				m.CurrentView = ViewHistory
+			}
+			return m, nil
+		// Removed 1, 2, 3 to allow numeric input
+
+		// 2. ACTIONS
+		case "ctrl+r": // Run
+			if m.CurrentView == ViewRunner {
 				cfg := m.RunnerView.GetConfig()
-				m.Runner.Cfg = cfg
-				m.CurrentView = ViewDashboard
+				m.startRun(cfg)
+			}
+			return m, nil
 
-				// Reset & Init Stats/Runner
-				m.Runner.Stats.Reset()
+		case "ctrl+s": // Stop
+			if m.RunActive && m.RunCancel != nil {
+				m.RunCancel()
+				m.RunActive = false
+				m.saveHistory()
+				m.CurrentView = ViewHistory
+				m.HistoryView.Refresh()
+			}
+			return m, nil
 
-				// Init Dashboard
-				totalDur := time.Duration(cfg.RampUp+cfg.SteadyDur+cfg.RampDown) * time.Second
-				m.DashView = views.NewDashboardView(totalDur)
-				m.DashView.Width = m.Width - 25
-				m.DashView.Height = m.Height
-
-				// Launch
-				m.RunActive = true
-				go m.Runner.Run(context.TODO())
-
-				return m, nil
+		case "ctrl+p": // Export
+			if m.CurrentView == ViewDashboard || m.CurrentView == ViewHistory {
+				// ... export logic ...
+				if m.CurrentView == ViewDashboard {
+					// Export Current Run
+					if len(m.Runner.Results) > 0 {
+						ts := time.Now().Format("20060102-150405")
+						base := fmt.Sprintf("steadyq_report_%s", ts)
+						if err := ExportCSV(m.Runner.Results, base+".csv"); err == nil {
+							ExportJSON(m.Runner.Results, base+".json")
+							m.StatusMsg = fmt.Sprintf("Exported to %s.{csv,json}", base)
+							cmds = append(cmds, clearStatusCmd())
+						} else {
+							m.StatusMsg = fmt.Sprintf("Export Failed: %v", err)
+							cmds = append(cmds, clearStatusCmd())
+						}
+					} else {
+						m.StatusMsg = "No results to export yet."
+						cmds = append(cmds, clearStatusCmd())
+					}
+				} else if m.CurrentView == ViewHistory {
+					item := m.HistoryView.GetSelectedItem()
+					if item != nil {
+						// Export History Item
+						base := fmt.Sprintf("steadyq_history_%s", item.ID)
+						if err := ExportCSV(item.Results, base+".csv"); err == nil {
+							ExportJSON(item.Results, base+".json")
+							m.StatusMsg = fmt.Sprintf("Exported history to %s.{csv,json}", base)
+							cmds = append(cmds, clearStatusCmd())
+						} else {
+							m.StatusMsg = fmt.Sprintf("Export Failed: %v", err)
+							cmds = append(cmds, clearStatusCmd())
+						}
+					}
+				}
+				return m, tea.Batch(cmds...)
 			}
 		}
+
+		// 3. FALLTHROUGH: VIEW SPECIFIC UPDATE
+		// Key wasn't global, pass to active view
+		// ... (Logic continues below in default case)
 
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
-		m.RunnerView.Width = msg.Width - 25
-		m.DashView.Width = msg.Width - 25
-		m.DashView.Height = msg.Height
-		m.HistoryView.Width = msg.Width - 25
-		m.HistoryView.Height = msg.Height // Pass full height, view handles reservation
+		contentHeight := m.Height - 7 // Increased footer space (3 rows now)
+
+		m.RunnerView.Width = m.Width
+		m.RunnerView.Height = contentHeight
+
+		m.DashView.Width = m.Width
+		m.DashView.Height = contentHeight
+
+		m.HistoryView.Width = m.Width
+		m.HistoryView.Height = contentHeight
 
 		updatedDash, _ := m.DashView.Update(msg)
 		m.DashView = updatedDash
@@ -160,94 +203,164 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StatsMsg:
 		snap := runner.StatsSnapshot(msg)
-
 		updatedDash, c := m.DashView.Update(snap)
 		m.DashView = updatedDash
 		cmds = append(cmds, c)
 
-		// If test just finished?
-		if snap.Inflight == 0 && m.DashView.Progress.Percent() >= 1.0 {
-			// Check if we already saved this run?
-			// We can use a simple flag in Model, or just check if last saved timestamp is close?
-			// Better: Add `RunActive bool` to Model.
-			if m.RunActive {
-				m.saveHistory()
-				m.RunActive = false
+		// Check for Completion (Time based)
+		elapsed := time.Since(m.DashView.StartTime)
+		if m.RunActive && elapsed >= m.DashView.Duration {
+			// Test finished naturally
+			m.RunActive = false
+			if m.RunCancel != nil {
+				m.RunCancel()
 			}
+			m.saveHistory() // Autosave on completion
+
+			// Auto Redirect to History
+			m.CurrentView = ViewHistory
+			m.HistoryView.Refresh()
 		}
 
 		cmds = append(cmds, waitForUpdate(m.Updates))
 	}
 
-	// Propagate to active view
+	// DEFAULT: Forward all other messages (KeyMsg that fell through, FrameMsg, BlinkMsg, etc.)
+	// This is CRITICAL for Bubbles to work (Progress bar animation, Input blinking)
+	var defaultCmd tea.Cmd
 	switch m.CurrentView {
 	case ViewRunner:
-		m.RunnerView, cmd = m.RunnerView.Update(msg)
-		cmds = append(cmds, cmd)
+		m.RunnerView, defaultCmd = m.RunnerView.Update(msg)
 	case ViewDashboard:
-		// m.DashView, cmd = m.DashView.Update(msg)
+		m.DashView, defaultCmd = m.DashView.Update(msg)
 	case ViewHistory:
-		m.HistoryView, cmd = m.HistoryView.Update(msg)
-		cmds = append(cmds, cmd)
-
-		// Check Replay
+		var hCmd tea.Cmd
+		m.HistoryView, hCmd = m.HistoryView.Update(msg)
+		defaultCmd = hCmd
 		if m.HistoryView.SelectedConfig != nil {
-			// Replay!
-			cfg := *m.HistoryView.SelectedConfig
-			m.RunnerView = views.NewRunnerView(cfg) // Reset Runner Form with new config
-			m.RunnerView.Width = m.Width - 25
-			m.HistoryView.SelectedConfig = nil // Clear flag
+			m.RunnerView = views.NewRunnerView(*m.HistoryView.SelectedConfig)
+			m.HistoryView.SelectedConfig = nil
 			m.CurrentView = ViewRunner
-			return m, nil
 		}
 	}
+	cmds = append(cmds, defaultCmd)
 
 	return m, tea.Batch(cmds...)
 }
 
+func (m *Model) startRun(cfg runner.Config) {
+	// Cancel existing if any
+	if m.RunActive && m.RunCancel != nil {
+		m.RunCancel()
+	}
+
+	m.Runner.Cfg = cfg
+	m.Runner.Stats.Reset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.RunCtx = ctx
+	m.RunCancel = cancel
+	m.RunActive = true
+
+	// totalDur calculated in NewDashboardView
+	m.DashView = views.NewDashboardView(cfg)
+	m.DashView.Width = m.Width
+	m.DashView.Height = m.Height - 6 // Adjusted for footer
+
+	m.CurrentView = ViewDashboard
+
+	go m.Runner.Run(ctx)
+}
+
+func (m Model) saveHistory() {
+	if m.Store == nil {
+		return
+	}
+	item := storage.HistoryItem{
+		ID:        fmt.Sprintf("%d", time.Now().Unix()),
+		Timestamp: time.Now(),
+		Config:    m.Runner.Cfg,
+		Summary: storage.RunSummary{
+			TotalRequests: m.Runner.Stats.Requests,
+			Success:       m.Runner.Stats.Success,
+			Fail:          m.Runner.Stats.Fail,
+			AvgLatencyMs:  m.Runner.Stats.ServiceTime.Mean() / 1000.0,
+			P99LatencyMs:  m.Runner.Stats.GetP99Service(),
+		},
+		Results: m.Runner.Results,
+	}
+	err := m.Store.Save(item)
+	if err != nil {
+		m.StatusMsg = fmt.Sprintf("Error saving history: %v", err)
+	} else {
+		m.StatusMsg = "History saved."
+	}
+	m.HistoryView.Refresh()
+}
+
 func (m Model) View() string {
 	if m.Width == 0 {
-		return "Initializing..."
+		return "Loading..."
 	}
 
-	sidebarWidth := 20
-	contentWidth := m.Width - sidebarWidth - 4
-
-	// 1. Sidebar
-	sidebar := strings.Builder{}
-	sidebar.WriteString(styles.Title.Render("⚡ SteadyQ"))
-	sidebar.WriteString("\n\n")
-
+	nav := strings.Builder{}
 	for i, item := range m.MenuItems {
 		if ViewID(i) == m.CurrentView {
-			sidebar.WriteString(styles.MenuItemActive.Render(item))
+			nav.WriteString(styles.TabActive.Render(item))
 		} else {
-			sidebar.WriteString(styles.MenuItem.Render(item))
+			nav.WriteString(styles.TabBase.Render(item))
 		}
-		sidebar.WriteString("\n")
 	}
+	navBar := styles.FooterBase.Width(m.Width).Render(nav.String())
 
-	// 2. Content
-	content := ""
+	contentStr := ""
 	switch m.CurrentView {
 	case ViewRunner:
-		content = m.RunnerView.View()
+		contentStr = m.RunnerView.View()
 	case ViewDashboard:
-		content = m.DashView.View()
+		contentStr = m.DashView.View()
 	case ViewHistory:
-		content = m.HistoryView.View()
+		contentStr = m.HistoryView.View()
 	}
 
-	// 3. Compose
-	leftPane := styles.Panel.
-		Width(sidebarWidth).
-		Height(m.Height - 2).
-		Render(sidebar.String())
+	// Adjust height for larger footer
+	content := styles.Panel.Width(m.Width - 2).Height(m.Height - 6).Render(contentStr)
 
-	rightPane := styles.PanelActive.
-		Width(contentWidth).
-		Height(m.Height - 2).
-		Render(content)
+	// Help Grid
+	// Row 1: Navigation
+	keys1 := []string{
+		styles.RenderKey("Ctrl+<->", "View"),
+		styles.RenderKey("Tab", "Field"),
+		styles.RenderKey("Enter", "Edit"),
+	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	// Row 2: Actions
+	keys2 := []string{
+		styles.RenderKey("Ctrl+R", "Run"),
+		styles.RenderKey("Ctrl+S", "Stop"),
+		styles.RenderKey("Ctrl+P", "Export"),
+		styles.RenderKey("Ctrl+Q", "Quit"),
+	}
+
+	// Row 3: Shortcuts
+	keys3 := []string{
+		styles.RenderKey("Ctrl+D", "Dash"),
+		styles.RenderKey("Ctrl+H", "Hist"),
+	}
+
+	helpRow1 := styles.FooterBase.Width(m.Width).Render(strings.Join(keys1, "   "))
+	helpRow2 := styles.FooterBase.Width(m.Width).Render(strings.Join(keys2, "   "))
+	helpRow3 := styles.FooterBase.Width(m.Width).Render(strings.Join(keys3, "   "))
+
+	footer := lipgloss.JoinVertical(lipgloss.Left, helpRow1, helpRow2, helpRow3)
+
+	// Status Overlay? Or just append to footer?
+	// Let's replace footer keybindings with status if exists, or append above footer.
+	if m.StatusMsg != "" {
+		status := styles.Box.BorderForeground(styles.ColorHighlight).Render(m.StatusMsg)
+		// Float it at the bottom above footer
+		return lipgloss.JoinVertical(lipgloss.Left, navBar, content, status, footer)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, navBar, content, footer)
 }

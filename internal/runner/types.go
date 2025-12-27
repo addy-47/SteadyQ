@@ -6,6 +6,7 @@ import (
 
 type Config struct {
 	URL        string
+	Method     string // HTTP Method
 	TargetRPS  int
 	SteadyDur  int
 	RampUp     int
@@ -13,9 +14,13 @@ type Config struct {
 	TimeoutSec int
 
 	// Open-Loop (RPS) vs Closed-Loop (Users)
-	Mode      string        // "rps" or "users"
+	// Open-Loop (RPS) vs Closed-Loop (Users)
+	Mode      string        // "rps", "users", "script"
 	NumUsers  int           // For "users" mode
 	ThinkTime time.Duration // For "users" mode
+
+	// Custom Scripting
+	Command string // Shell command to execute per request (overrides URL/Method)
 }
 
 type ExperimentResult struct {

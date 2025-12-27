@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,12 +28,16 @@ type StatsSnapshot struct {
 	Inflight int64
 
 	// Pre-calculated percentiles for the UI (cheap copy)
-	P50ServiceMs float64
-	P90ServiceMs float64
-	P99ServiceMs float64
-	MaxServiceMs int64
+	P50ServiceMs  float64
+	P90ServiceMs  float64
+	P95ServiceMs  float64
+	P99ServiceMs  float64
+	MaxServiceMs  int64
+	MeanServiceMs float64
 
 	AvgQueueWaitMs float64
+
+	StatusCodes map[int]int
 }
 
 // StatsUpdateChan is the channel type
@@ -57,8 +63,13 @@ func NewRunner(cfg Config, updates StatsUpdateChan) *Runner {
 	t.MaxIdleConnsPerHost = 2000
 	t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
+	timeout := time.Duration(cfg.TimeoutSec) * time.Second
+	if cfg.TimeoutSec == 0 {
+		timeout = 30 * time.Second
+	}
+
 	client := &http.Client{
-		Timeout:   time.Duration(cfg.TimeoutSec) * time.Second,
+		Timeout:   timeout,
 		Transport: t,
 	}
 
@@ -101,9 +112,12 @@ func (r *Runner) sendUpdate() {
 		Inflight:       atomic.LoadInt64(&r.inflight),
 		P50ServiceMs:   r.Stats.GetP50Service(),
 		P90ServiceMs:   r.Stats.GetP90Service(),
+		P95ServiceMs:   r.Stats.GetP95Service(),
 		P99ServiceMs:   r.Stats.GetP99Service(),
 		MaxServiceMs:   r.Stats.ServiceTime.Max() / 1000,
+		MeanServiceMs:  r.Stats.ServiceTime.Mean() / 1000,
 		AvgQueueWaitMs: r.Stats.QueueWaitAvgMs(),
+		StatusCodes:    r.Stats.GetStatusCodes(),
 	}
 
 	// Non-blocking send
@@ -116,7 +130,7 @@ func (r *Runner) sendUpdate() {
 
 func (r *Runner) Run(ctx context.Context) {
 	// Start Tick Loop for UI
-	r.StartTickLoop(ctx, 200*time.Millisecond)
+	r.StartTickLoop(ctx, 100*time.Millisecond)
 
 	if r.Cfg.Mode == "users" {
 		r.runUsers(ctx)
@@ -133,7 +147,24 @@ func (r *Runner) runUsers(ctx context.Context) {
 	start := time.Now()
 	totalDur := time.Duration(r.Cfg.RampUp+r.Cfg.SteadyDur+r.Cfg.RampDown) * time.Second
 
+	// Calculate spawn interval for RampUp
+	// If RampUp is 0, we spawn all immediately (interval 0)
+	var spawnInterval time.Duration
+	if r.Cfg.RampUp > 0 && r.Cfg.NumUsers > 1 {
+		// e.g. 10 users over 10s = 1 user per 1s
+		spawnInterval = time.Duration(float64(r.Cfg.RampUp) / float64(r.Cfg.NumUsers) * float64(time.Second))
+	}
+
 	for i := 0; i < r.Cfg.NumUsers; i++ {
+		// Wait before spawning next user if RampUp is active
+		if i > 0 && spawnInterval > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(spawnInterval):
+			}
+		}
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -218,44 +249,93 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 
 	userID := uuid.New().String()
 	chatID := uuid.New().String()
-	q := "Why is the sky blue?" // Optimization: Pre-allocate or reuse
-	bodyBytes, _ := json.Marshal(map[string]string{"query": q})
 
-	req, _ := http.NewRequest(
-		"POST",
-		fmt.Sprintf("%s?chatID=%s&userID=%s", r.Cfg.URL, chatID, userID),
-		bytes.NewBuffer(bodyBytes),
-	)
-	req.Header.Set("Content-Type", "application/json")
+	var err error
+	var status int
+	var bytesLen int64
+	var respBody string
 
-	resp, err := r.Client.Do(req)
+	if r.Cfg.Command != "" {
+		// Custom Script Execution
+		cmdStr := r.Cfg.Command
+		// Simple Templating
+		cmdStr = strings.ReplaceAll(cmdStr, "{{userID}}", userID)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{chatID}}", chatID)
+
+		// Execute shell
+		// Using sh -c to allow complex commands
+		cmd := exec.Command("sh", "-c", cmdStr)
+		var out bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+
+		err = cmd.Run()
+
+		if err == nil {
+			status = 200 // Success assumption for zero exit code
+			bytesLen = int64(out.Len())
+			respBody = out.String()
+		} else {
+			status = 500
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				status = exitErr.ExitCode()
+			}
+			respBody = stderr.String()
+		}
+
+	} else {
+		// Standard HTTP Request
+		q := "Why is the sky blue?" // Optimization: Pre-allocate or reuse
+		bodyBytes, _ := json.Marshal(map[string]string{"query": q})
+
+		method := r.Cfg.Method
+		if method == "" {
+			method = "GET"
+		}
+
+		req, _ := http.NewRequest(
+			method,
+			fmt.Sprintf("%s?chatID=%s&userID=%s", r.Cfg.URL, chatID, userID),
+			bytes.NewBuffer(bodyBytes),
+		)
+		req.Header.Set("Content-Type", "application/json")
+
+		var resp *http.Response
+		resp, err = r.Client.Do(req)
+
+		if err == nil {
+			status = resp.StatusCode
+			bytesLen = resp.ContentLength
+
+			if resp.StatusCode >= 300 {
+				b, _ := io.ReadAll(resp.Body)
+				respBody = string(b)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}
 
 	endTime := time.Now()
 	serviceTime := endTime.Sub(actualStart)
 	totalLatency := endTime.Sub(scheduledTime)
 
 	res := ExperimentResult{
-		TimeStamp:   scheduledTime,
-		Latency:     totalLatency,
-		ServiceTime: serviceTime,
-		QueueWait:   queueWait,
-		Err:         err,
-		UserID:      userID,
-		Query:       q,
+		TimeStamp:    scheduledTime,
+		Latency:      totalLatency,
+		ServiceTime:  serviceTime,
+		QueueWait:    queueWait,
+		Err:          err,
+		UserID:       userID,
+		Query:        "custom",
+		Status:       status,
+		Bytes:        bytesLen,
+		ResponseBody: respBody,
 	}
 
 	if err == nil {
-		res.Status = resp.StatusCode
-		res.Bytes = resp.ContentLength
-
-		if resp.StatusCode >= 300 {
-			b, _ := io.ReadAll(resp.Body)
-			res.ResponseBody = string(b)
-		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if status >= 200 && status < 300 {
 			res.Success = true
 		}
 	}
@@ -266,6 +346,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 		res.ServiceTime,
 		res.QueueWait,
 		res.Latency,
+		res.Status,
 	)
 
 	r.mu.Lock()

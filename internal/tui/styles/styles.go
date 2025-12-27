@@ -1,84 +1,87 @@
 package styles
 
-import "github.com/charmbracelet/lipgloss"
-
-// Color Palette (Cyberpunk / Neon)
-var (
-	ColorPrimary   = lipgloss.Color("#00F0FF") // Cyan
-	ColorSecondary = lipgloss.Color("#7D3C98") // Purple
-	ColorSuccess   = lipgloss.Color("#00FF41") // Matrix Green
-	ColorError     = lipgloss.Color("#FF3131") // Neon Red
-	ColorWarn      = lipgloss.Color("#FFD700") // Gold
-	ColorText      = lipgloss.Color("#E0E0E0") // Off-white
-	ColorSub       = lipgloss.Color("#6E6E6E") // Grey
-	ColorBorder    = lipgloss.Color("#333333") // Dark Grey
-	ColorBg        = lipgloss.Color("#0D0D0D") // Black
+import (
+	"github.com/charmbracelet/lipgloss"
 )
 
+// --- Color Palette (Premium / Dark Mode) ---
 var (
-	// Standard Text
-	Title = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorPrimary).
-		Padding(0, 1).
-		MarginBottom(1)
+	ColorPrimary   = lipgloss.Color("#7D56F4") // Indigo/Purple
+	ColorSecondary = lipgloss.Color("#04B575") // Green
+	ColorError     = lipgloss.Color("#FF5F87") // Pink/Red
+	ColorWarning   = lipgloss.Color("#FFAF00") // Gold
+	ColorText      = lipgloss.Color("#FAFAFA") // White-ish
+	ColorSubtle    = lipgloss.Color("#767676") // Gray
+	ColorBorder    = lipgloss.Color("#3C3C3C") // Dark Gray border
+	ColorBg        = lipgloss.Color("#1A1A1A") // Dark BG (often terminal default)
+	ColorHighlight = lipgloss.Color("#3E3E3E") // Slightly lighter BG
+)
 
-	Subtle = lipgloss.NewStyle().
-		Foreground(ColorSub)
+// --- Base Styles ---
 
-	Active = lipgloss.NewStyle().
-		Foreground(ColorPrimary)
-
-	// Navigation Sidebar
-	MenuItem = lipgloss.NewStyle().
-			Foreground(ColorSub).
-			Padding(0, 1)
-
-	MenuItemActive = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(ColorPrimary).
-			Foreground(ColorText).
-			Bold(true).
-			Padding(0, 1)
-
-	// Panels
-	Box = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorder).
-		Padding(0, 1)
-
+var (
+	// Main Container Panel
 	Panel = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorBorder).
-		Padding(1)
+		Padding(1, 2)
 
-	PanelActive = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(ColorPrimary).
-			Padding(1)
+	// Titles
+	Title = lipgloss.NewStyle().
+		Foreground(ColorPrimary).
+		Bold(true).
+		Padding(0, 1).
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(ColorSubtle)
 
-	// Buttons
-	Button = lipgloss.NewStyle().
-		Foreground(ColorText).
-		Background(ColorSub).
-		Padding(0, 3).
-		MarginTop(1)
+	// Text Styles
+	Text   = lipgloss.NewStyle().Foreground(ColorText)
+	Subtle = lipgloss.NewStyle().Foreground(ColorSubtle)
 
-	ButtonActive = lipgloss.NewStyle().
-			Foreground(ColorBg).
-			Background(ColorPrimary).
-			Bold(true).
-			Padding(0, 3).
-			MarginTop(1)
+	// Value metrics
+	Value  = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
+	Active = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+	// Alerts
+	Error   = lipgloss.NewStyle().Foreground(ColorError)
+	Warn    = lipgloss.NewStyle().Foreground(ColorWarning)
+	Success = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
+
+	// Keys
+	KeyKey  = lipgloss.NewStyle().Foreground(ColorText).Bold(true)
+	KeyDesc = lipgloss.NewStyle().Foreground(ColorSubtle)
+
+	// Inputs
+	InputActive = lipgloss.NewStyle().Border(lipgloss.ThickBorder()).BorderForeground(ColorPrimary).Padding(0, 1)
+	InputNormal = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ColorBorder).Padding(0, 1)
+
+	// Box/Card container
+	Box = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorBorder).
+		Padding(0, 1).
+		Margin(0, 1)
 
 	// Footer
-	Footer = lipgloss.NewStyle().
-		Foreground(ColorSub).
-		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(ColorBorder).
-		Padding(0, 1)
+	TabBase = lipgloss.NewStyle().
+		Foreground(ColorSubtle).
+		Padding(0, 2)
 
-	// Alerts
-	Error = lipgloss.NewStyle().Foreground(ColorError)
-	Warn  = lipgloss.NewStyle().Foreground(ColorWarn)
+	TabActive = lipgloss.NewStyle().
+			Foreground(ColorPrimary).
+			Bold(true).
+			Border(lipgloss.NormalBorder(), false, false, true, false).
+			BorderForeground(ColorPrimary).
+			Padding(0, 2)
+
+	FooterBase = lipgloss.NewStyle().
+			Height(1).
+			Padding(0, 1)
 )
+
+func RenderKey(key, desc string) string {
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		KeyKey.Render("<"+key+">"), // Add brackets for style
+		" ",
+		KeyDesc.Render(desc),
+	)
+}
