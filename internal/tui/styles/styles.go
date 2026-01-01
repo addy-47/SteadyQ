@@ -4,17 +4,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// --- Color Palette (Premium / Dark Mode) ---
+// --- Color Palette (High Contrast Adaptive) ---
 var (
-	ColorPrimary   = lipgloss.Color("#7D56F4") // Indigo/Purple
-	ColorSecondary = lipgloss.Color("#04B575") // Green
-	ColorError     = lipgloss.Color("#FF5F87") // Pink/Red
-	ColorWarning   = lipgloss.Color("#FFAF00") // Gold
-	ColorText      = lipgloss.Color("#FAFAFA") // White-ish
-	ColorSubtle    = lipgloss.Color("#767676") // Gray
-	ColorBorder    = lipgloss.Color("#3C3C3C") // Dark Gray border
-	ColorBg        = lipgloss.Color("#1A1A1A") // Dark BG (often terminal default)
-	ColorHighlight = lipgloss.Color("#3E3E3E") // Slightly lighter BG
+	ColorPrimary   = lipgloss.AdaptiveColor{Light: "#5A30BC", Dark: "#7D56F4"} // Deep Purple / Bright Purple
+	ColorSecondary = lipgloss.AdaptiveColor{Light: "#026942", Dark: "#04B575"} // Dark Green / Bright Green
+	ColorError     = lipgloss.AdaptiveColor{Light: "#C41E3A", Dark: "#FF5F87"} // Crimson / Pink-Red
+	ColorWarning   = lipgloss.AdaptiveColor{Light: "#B36700", Dark: "#FFAF00"} // Dark Gold / Gold
+	ColorText      = lipgloss.AdaptiveColor{Light: "#111111", Dark: "#FFFFFF"} // Almost Black / White
+	ColorSubtle    = lipgloss.AdaptiveColor{Light: "#555555", Dark: "#888888"} // Dark Gray / Light Gray
+	ColorBorder    = lipgloss.AdaptiveColor{Light: "#888888", Dark: "#444444"} // Mid Gray / Dark Gray
+	ColorBg        = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#121212"} // White / Almost Black
+	ColorHighlight = lipgloss.AdaptiveColor{Light: "#EEEEEE", Dark: "#333333"} // Very Light Gray / Dark Gray
 )
 
 // --- Base Styles ---

@@ -59,8 +59,16 @@ func (m DashboardView) Update(msg tea.Msg) (DashboardView, tea.Cmd) {
 		m.LastUpdate = time.Now()
 		m.Stats = msg
 
-		elapsed := time.Since(m.StartTime)
-		pct := float64(elapsed) / float64(m.Duration)
+		var elapsed time.Duration
+		if !m.StartTime.IsZero() {
+			elapsed = time.Since(m.StartTime)
+		}
+
+		pct := 0.0
+		if m.Duration > 0 {
+			pct = float64(elapsed) / float64(m.Duration)
+		}
+
 		if pct > 1.0 {
 			pct = 1.0
 		}
@@ -87,7 +95,10 @@ func (m DashboardView) View() string {
 	s := strings.Builder{}
 
 	// --- Header ---
-	elapsed := time.Since(m.StartTime)
+	var elapsed time.Duration
+	if !m.StartTime.IsZero() {
+		elapsed = time.Since(m.StartTime)
+	}
 	remaining := m.Duration - elapsed
 	if remaining < 0 {
 		remaining = 0
@@ -95,13 +106,15 @@ func (m DashboardView) View() string {
 
 	// Determine Phase
 	phase := "Steady State"
-	rupEnd := time.Duration(m.Config.RampUp) * time.Second
-	steadyEnd := rupEnd + time.Duration(m.Config.SteadyDur)*time.Second
+	if m.Duration > 0 { // Only calculate phase if duration is set
+		rupEnd := time.Duration(m.Config.RampUp) * time.Second
+		steadyEnd := rupEnd + time.Duration(m.Config.SteadyDur)*time.Second
 
-	if elapsed < rupEnd {
-		phase = "Ramp Up"
-	} else if elapsed > steadyEnd {
-		phase = "Ramp Down"
+		if elapsed < rupEnd {
+			phase = "Ramp Up"
+		} else if elapsed > steadyEnd {
+			phase = "Ramp Down"
+		}
 	}
 
 	timer := fmt.Sprintf("%s / %s", elapsed.Round(time.Second), remaining.Round(time.Second))

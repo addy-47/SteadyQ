@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -123,6 +124,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.RunActive = false
 			}
 			return m, nil
+
+		case "ctrl+p": // Export
+			if m.CurrentView == ViewDashboard {
+				// Export Current Run
+				if len(m.Runner.Results) > 0 {
+					ts := time.Now().Format("20060102-150405")
+					base := fmt.Sprintf("steadyq_report_%s", ts)
+					if err := ExportCSV(m.Runner.Results, base+".csv"); err == nil {
+						ExportJSON(m.Runner.Results, base+".json")
+						m.StatusMsg = fmt.Sprintf("Exported to %s.{csv,json}", base)
+						cmds = append(cmds, clearStatusCmd())
+					} else {
+						m.StatusMsg = fmt.Sprintf("Export Failed: %v", err)
+						cmds = append(cmds, clearStatusCmd())
+					}
+				} else {
+					m.StatusMsg = "No results to export yet."
+					cmds = append(cmds, clearStatusCmd())
+				}
+				return m, tea.Batch(cmds...)
+			}
 		}
 
 		// 3. FALLTHROUGH: VIEW SPECIFIC UPDATE
@@ -239,6 +261,7 @@ func (m Model) View() string {
 	keys2 := []string{
 		styles.RenderKey("Ctrl+R", "Run"),
 		styles.RenderKey("Ctrl+S", "Stop"),
+		styles.RenderKey("Ctrl+P", "Export"),
 		styles.RenderKey("Ctrl+Q", "Quit"),
 	}
 
