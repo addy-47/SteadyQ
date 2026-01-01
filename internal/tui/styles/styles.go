@@ -6,15 +6,22 @@ import (
 
 // --- Color Palette (High Contrast Adaptive) ---
 var (
-	ColorPrimary   = lipgloss.AdaptiveColor{Light: "#5A30BC", Dark: "#7D56F4"} // Deep Purple / Bright Purple
-	ColorSecondary = lipgloss.AdaptiveColor{Light: "#026942", Dark: "#04B575"} // Dark Green / Bright Green
-	ColorError     = lipgloss.AdaptiveColor{Light: "#C41E3A", Dark: "#FF5F87"} // Crimson / Pink-Red
+	// Primary: Deep Purple in light mode, Neon Purple in dark mode
+	ColorPrimary = lipgloss.AdaptiveColor{Light: "#5A189A", Dark: "#9D4EDD"}
+
+	// Secondary: Dark Cyan in light mode, Bright Cyan in dark mode
+	ColorSecondary = lipgloss.AdaptiveColor{Light: "#023E8A", Dark: "#48CAE4"}
+
+	// Accent/Error: Dark Red in light mode, Bright Coral in dark mode
+	ColorAccent    = lipgloss.AdaptiveColor{Light: "#C9184A", Dark: "#FF4D6D"}
+	ColorError     = lipgloss.AdaptiveColor{Light: "#C9184A", Dark: "#FF4D6D"}
 	ColorWarning   = lipgloss.AdaptiveColor{Light: "#B36700", Dark: "#FFAF00"} // Dark Gold / Gold
 	ColorText      = lipgloss.AdaptiveColor{Light: "#111111", Dark: "#FFFFFF"} // Almost Black / White
 	ColorSubtle    = lipgloss.AdaptiveColor{Light: "#555555", Dark: "#888888"} // Dark Gray / Light Gray
 	ColorBorder    = lipgloss.AdaptiveColor{Light: "#888888", Dark: "#444444"} // Mid Gray / Dark Gray
 	ColorBg        = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#121212"} // White / Almost Black
 	ColorHighlight = lipgloss.AdaptiveColor{Light: "#EEEEEE", Dark: "#333333"} // Very Light Gray / Dark Gray
+	ColorBanner    = lipgloss.AdaptiveColor{Light: "#444444", Dark: "#AAAAAA"} // Variation of Subtle
 )
 
 // --- Base Styles ---

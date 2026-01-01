@@ -7,6 +7,7 @@ import (
 type Config struct {
 	URL        string
 	Method     string // HTTP Method
+	Body       string // Request Body
 	TargetRPS  int
 	SteadyDur  int
 	RampUp     int
