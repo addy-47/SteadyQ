@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
@@ -142,6 +141,16 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
+func (r *Runner) applyTemplates(input, userID, requestUUID string) string {
+	if input == "" {
+		return ""
+	}
+	s := input
+	s = strings.ReplaceAll(s, "{{userID}}", userID)
+	s = strings.ReplaceAll(s, "{{uuid}}", requestUUID)
+	return s
+}
+
 // ... rest of the runUsers/runRPS logic ...
 // (We reuse the existing logic, but I need to include it here to compile)
 
@@ -171,6 +180,8 @@ func (r *Runner) runUsers(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Generate STABLE userID for this virtual user
+			vUser := uuid.New().String()
 			for {
 				select {
 				case <-ctx.Done():
@@ -179,7 +190,7 @@ func (r *Runner) runUsers(ctx context.Context) {
 					if time.Since(start) > totalDur {
 						return
 					}
-					r.executeRequest(time.Now())
+					r.executeRequest(time.Now(), vUser)
 					if r.Cfg.ThinkTime > 0 {
 						time.Sleep(r.Cfg.ThinkTime)
 					}
@@ -200,6 +211,7 @@ func (r *Runner) runRPS(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return
 		default:
 			now := time.Now()
@@ -211,7 +223,7 @@ func (r *Runner) runRPS(ctx context.Context) {
 			}
 
 			targetRPS := r.getCurrentRPS(elapsed)
-			if targetRPS <= 0.1 {
+			if targetRPS <= 0.001 {
 				time.Sleep(100 * time.Millisecond)
 				nextRequestTime = time.Now()
 				continue
@@ -219,28 +231,33 @@ func (r *Runner) runRPS(ctx context.Context) {
 
 			period := time.Duration(float64(time.Second) / targetRPS)
 
-			if nextRequestTime.After(now) {
-				time.Sleep(nextRequestTime.Sub(now))
+			// If we are way behind (more than 1s), reset nextRequestTime to avoid a massive burst
+			// But if we are only slightly behind, spawn immediately to catch up.
+			if now.Sub(nextRequestTime) > 1*time.Second {
+				nextRequestTime = now
 			}
 
-			wg.Add(1)
-			scheduledTime := nextRequestTime
+			// While we are behind the schedule, spawn requests
+			for nextRequestTime.Before(now) || nextRequestTime.Equal(now) {
+				wg.Add(1)
+				scheduledTime := nextRequestTime
+				go func() {
+					defer wg.Done()
+					// RPS mode = independent events, fresh userID by default
+					r.executeRequest(scheduledTime, uuid.New().String())
+				}()
+				nextRequestTime = nextRequestTime.Add(period)
+			}
 
-			go func() {
-				defer wg.Done()
-				r.executeRequest(scheduledTime)
-			}()
-
-			nextRequestTime = nextRequestTime.Add(period)
-
-			if time.Since(nextRequestTime) > 1*time.Second {
-				nextRequestTime = time.Now()
+			// If next one is in the future, sleep until then
+			if nextRequestTime.After(now) {
+				time.Sleep(nextRequestTime.Sub(now))
 			}
 		}
 	}
 }
 
-func (r *Runner) executeRequest(scheduledTime time.Time) {
+func (r *Runner) executeRequest(scheduledTime time.Time, userID string) {
 	actualStart := time.Now()
 	queueWait := actualStart.Sub(scheduledTime)
 	if queueWait < 0 {
@@ -250,7 +267,6 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 	atomic.AddInt64(&r.inflight, 1)
 	defer atomic.AddInt64(&r.inflight, -1)
 
-	userID := uuid.New().String()
 	reqID := uuid.New().String()
 
 	var err error
@@ -260,10 +276,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 
 	if r.Cfg.Command != "" {
 		// Custom Script Execution
-		cmdStr := r.Cfg.Command
-		// Simple Templating
-		cmdStr = strings.ReplaceAll(cmdStr, "{{userID}}", userID)
-		cmdStr = strings.ReplaceAll(cmdStr, "{{reqID}}", reqID)
+		cmdStr := r.applyTemplates(r.Cfg.Command, userID, reqID)
 
 		// Execute shell
 		// Using sh -c to allow complex commands
@@ -294,24 +307,11 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 			method = "GET"
 		}
 
-		url := r.Cfg.URL
-		url = strings.ReplaceAll(url, "{{userID}}", userID)
-		url = strings.ReplaceAll(url, "{{reqID}}", reqID)
-
-		// Cache busting (if not already present)
-		if !strings.Contains(url, "reqID=") {
-			sep := "?"
-			if strings.Contains(url, "?") {
-				sep = "&"
-			}
-			url = fmt.Sprintf("%s%sreqID=%s&userID=%s", url, sep, reqID, userID)
-		}
+		url := r.applyTemplates(r.Cfg.URL, userID, reqID)
 
 		var body io.Reader
 		if r.Cfg.Body != "" {
-			bodyStr := r.Cfg.Body
-			bodyStr = strings.ReplaceAll(bodyStr, "{{userID}}", userID)
-			bodyStr = strings.ReplaceAll(bodyStr, "{{reqID}}", reqID)
+			bodyStr := r.applyTemplates(r.Cfg.Body, userID, reqID)
 			body = strings.NewReader(bodyStr)
 		}
 
@@ -320,8 +320,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 		// Set Headers with templating
 		hasContentType := false
 		for k, v := range r.Cfg.Headers {
-			val := strings.ReplaceAll(v, "{{userID}}", userID)
-			val = strings.ReplaceAll(val, "{{reqID}}", reqID)
+			val := r.applyTemplates(v, userID, reqID)
 			req.Header.Set(k, val)
 			if strings.ToLower(k) == "content-type" {
 				hasContentType = true

@@ -42,10 +42,10 @@ func (m RunnerView) GetHelp() string {
 	case FieldBody:
 		return "The Request Body.\nUsually JSON or raw text.\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field"
 	case FieldCommand:
-		return "The Shell Command to execute for each 'request'.\n\nTemplate Variables:\n• {{userID}}: Unique UUID for the simulated user.\n• {{chatID}}: Unique UUID for the request context."
+		return "The Shell Command to execute for each 'request'.\n\nTemplate Variables:\n• {{userID}}: Stable ID for the Virtual User (persists across requests).\n• {{uuid}}: A fresh, random UUID v4 (36-character string) generated for every request."
 	case FieldLoadMode:
 		return "Load Generation Mode.\n• [RPS] (Open Loop): Generates requests at a fixed rate.\n• [Users] (Closed Loop): Simulates fixed concurrent users.\n\nPress [Space] to toggle."
-	case FieldQPS:
+	case FieldRPS:
 		if m.Inputs[FieldLoadMode].Value() == "users" {
 			return "Number of concurrent users (virtual users) to simulate."
 		}
@@ -91,7 +91,7 @@ func (m RunnerView) View() string {
 
 	inputCol.WriteString(m.renderInput(FieldLoadMode))
 	inputCol.WriteString("\n")
-	inputCol.WriteString(m.renderInput(FieldQPS))
+	inputCol.WriteString(m.renderInput(FieldRPS))
 	inputCol.WriteString("\n")
 	inputCol.WriteString(m.renderInput(FieldDuration))
 	inputCol.WriteString("\n")
@@ -139,7 +139,7 @@ const (
 	FieldBody
 	FieldCommand
 	FieldLoadMode
-	FieldQPS
+	FieldRPS
 	FieldDuration
 	FieldRampUp
 	FieldRampDown
@@ -200,13 +200,13 @@ func NewRunnerView(initialCfg runner.Config) RunnerView {
 	inputs[FieldLoadMode].Width = 10
 
 	if initialCfg.Mode == "users" {
-		inputs[FieldQPS].SetValue(strconv.Itoa(initialCfg.NumUsers))
-		inputs[FieldQPS].Prompt = "Users: "
+		inputs[FieldRPS].SetValue(strconv.Itoa(initialCfg.NumUsers))
+		inputs[FieldRPS].Prompt = "Users: "
 	} else {
-		inputs[FieldQPS].SetValue(strconv.Itoa(initialCfg.TargetRPS))
-		inputs[FieldQPS].Prompt = "Target QPS: "
+		inputs[FieldRPS].SetValue(strconv.Itoa(initialCfg.TargetRPS))
+		inputs[FieldRPS].Prompt = "Target RPS: "
 	}
-	inputs[FieldQPS].Width = 10
+	inputs[FieldRPS].Width = 10
 
 	inputs[FieldDuration].SetValue(strconv.Itoa(initialCfg.SteadyDur))
 	inputs[FieldDuration].Prompt = "Duration (s): "
@@ -293,10 +293,10 @@ func (m RunnerView) Update(msg tea.Msg) (RunnerView, tea.Cmd) {
 			if m.Focus == FieldLoadMode {
 				if loadMode == "rps" {
 					m.Inputs[FieldLoadMode].SetValue("users")
-					m.Inputs[FieldQPS].Prompt = "Users: "
+					m.Inputs[FieldRPS].Prompt = "Users: "
 				} else {
 					m.Inputs[FieldLoadMode].SetValue("rps")
-					m.Inputs[FieldQPS].Prompt = "Target QPS: "
+					m.Inputs[FieldRPS].Prompt = "Target RPS: "
 				}
 				return m, nil
 			}
@@ -349,7 +349,7 @@ func (m RunnerView) nextFocus(current, direction int, reqType, loadMode string) 
 		visible = append(visible, FieldCommand)
 	}
 
-	visible = append(visible, FieldLoadMode, FieldQPS, FieldDuration, FieldRampUp)
+	visible = append(visible, FieldLoadMode, FieldRPS, FieldDuration, FieldRampUp)
 
 	if loadMode == "rps" {
 		visible = append(visible, FieldRampDown)
@@ -457,7 +457,7 @@ func (m RunnerView) GetConfig() runner.Config {
 	}
 
 	mode := m.Inputs[FieldLoadMode].Value()
-	qps, _ := strconv.Atoi(m.Inputs[FieldQPS].Value())
+	rps, _ := strconv.Atoi(m.Inputs[FieldRPS].Value())
 	dur, _ := strconv.Atoi(m.Inputs[FieldDuration].Value())
 	rup, _ := strconv.Atoi(m.Inputs[FieldRampUp].Value())
 	rdown, _ := strconv.Atoi(m.Inputs[FieldRampDown].Value())
@@ -466,9 +466,9 @@ func (m RunnerView) GetConfig() runner.Config {
 	targetRPS := 0
 	numUsers := 1
 	if mode == "users" {
-		numUsers = qps
+		numUsers = rps
 	} else {
-		targetRPS = qps
+		targetRPS = rps
 	}
 
 	return runner.Config{
