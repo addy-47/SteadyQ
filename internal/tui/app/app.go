@@ -62,6 +62,7 @@ func NewModel(r *runner.Runner, updates runner.StatsUpdateChan) Model {
 		CurrentView: ViewRunner,
 		MenuItems:   []string{"[1] New Run", "[2] Dashboard"},
 		RunnerView:  views.NewRunnerView(r.Cfg),
+		DashView:    views.NewDashboardView(r.Cfg, 0, 0),
 	}
 }
 
@@ -165,6 +166,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updatedDash, _ := m.DashView.Update(msg)
 		m.DashView = updatedDash
 
+		updatedRunner, _ := m.RunnerView.Update(msg)
+		m.RunnerView = updatedRunner
+
 	case StatsMsg:
 		snap := runner.StatsSnapshot(msg)
 		updatedDash, c := m.DashView.Update(snap)
@@ -214,9 +218,7 @@ func (m *Model) startRun(cfg runner.Config) {
 	m.RunActive = true
 
 	// totalDur calculated in NewDashboardView
-	m.DashView = views.NewDashboardView(cfg)
-	m.DashView.Width = m.Width
-	m.DashView.Height = m.Height - 6 // Adjusted for footer
+	m.DashView = views.NewDashboardView(cfg, m.Width, m.Height-6)
 
 	m.CurrentView = ViewDashboard
 

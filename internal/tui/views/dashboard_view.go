@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -16,34 +17,39 @@ import (
 
 type DashboardView struct {
 	Stats    runner.StatsSnapshot
+	Viewport viewport.Model
 	Progress progress.Model
 	Config   runner.Config
 
 	StartTime  time.Time
 	Duration   time.Duration
 	LastUpdate time.Time
-	LastReqs   uint64
 
 	Width  int
 	Height int
 }
 
-func NewDashboardView(cfg runner.Config) DashboardView {
+func NewDashboardView(cfg runner.Config, width, height int) DashboardView {
 	totalDur := time.Duration(cfg.RampUp+cfg.SteadyDur+cfg.RampDown) * time.Second
 
 	// Gradient Progress Bar
 	prog := progress.New(
 		progress.WithGradient("#7D56F4", "#04B575"),
-		progress.WithWidth(40),
+		progress.WithWidth(width-10),
 		progress.WithoutPercentage(),
 	)
 
+	vp := viewport.New(width-6, height-8)
+
 	return DashboardView{
+		Viewport:   vp,
 		Progress:   prog,
 		Config:     cfg,
 		StartTime:  time.Now(),
 		Duration:   totalDur,
 		LastUpdate: time.Now(),
+		Width:      width,
+		Height:     height,
 	}
 }
 
@@ -53,6 +59,7 @@ func (m DashboardView) Init() tea.Cmd {
 
 func (m DashboardView) Update(msg tea.Msg) (DashboardView, tea.Cmd) {
 	var cmd tea.Cmd
+	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
 	case runner.StatsSnapshot:
@@ -72,23 +79,27 @@ func (m DashboardView) Update(msg tea.Msg) (DashboardView, tea.Cmd) {
 		if pct > 1.0 {
 			pct = 1.0
 		}
-		cmd = m.Progress.SetPercent(pct)
-		return m, cmd
+		cmds = append(cmds, m.Progress.SetPercent(pct))
 
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
 		m.Progress.Width = msg.Width - 10
+		m.Viewport.Width = msg.Width - 6
+		m.Viewport.Height = msg.Height - 8
 
 	case progress.FrameMsg:
 		newModel, cmd := m.Progress.Update(msg)
 		if newModel, ok := newModel.(progress.Model); ok {
 			m.Progress = newModel
 		}
-		return m, cmd
+		cmds = append(cmds, cmd)
 	}
 
-	return m, nil
+	m.Viewport, cmd = m.Viewport.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m DashboardView) View() string {
@@ -252,14 +263,41 @@ func (m DashboardView) View() string {
 			count := m.Stats.ErrorCounts[e]
 			// Truncate error if too long
 			dispErr := e
-			if len(dispErr) > 40 {
-				dispErr = dispErr[:37] + "..."
+			if len(dispErr) > 60 {
+				dispErr = dispErr[:57] + "..."
 			}
 			s.WriteString(fmt.Sprintf("%s %s\n", styles.Error.Render(fmt.Sprintf("%d x", count)), dispErr))
 		}
 	}
 
-	return styles.Panel.Width(m.Width - 2).Render(s.String())
+	// --- Response Samples ---
+	if len(m.Stats.ResponseSamples) > 0 {
+		s.WriteString("\n")
+		s.WriteString(styles.Subtle.Render("Sample Response Body (>=400)"))
+		s.WriteString("\n")
+
+		var codes []int
+		for k := range m.Stats.ResponseSamples {
+			codes = append(codes, k)
+		}
+		sort.Ints(codes)
+
+		for _, c := range codes {
+			sample := m.Stats.ResponseSamples[c]
+			// Clean up sample (newlines, etc)
+			sample = strings.ReplaceAll(sample, "\n", " ")
+			sample = strings.ReplaceAll(sample, "\r", "")
+			if len(sample) > 80 {
+				sample = sample[:77] + "..."
+			}
+			s.WriteString(fmt.Sprintf("%s: %s\n", styles.Warn.Render(fmt.Sprintf("[%d]", c)), sample))
+		}
+	}
+
+	content := styles.Panel.Width(m.Width - 6).Render(s.String())
+	m.Viewport.SetContent(content)
+
+	return m.Viewport.View()
 }
 
 func MakeCard(title, value string) string {

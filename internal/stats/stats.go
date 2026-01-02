@@ -26,17 +26,19 @@ type Stats struct {
 	// Let's use simple sync.Map or Mutex.
 	// Given single threaded runner loop for non-async parts, typically we want low contention.
 	// Let's use a Mutex for now, simplistic.
-	muCodes     sync.Mutex
-	StatusCodes map[int]int
-	ErrorCounts map[string]int
+	muCodes         sync.Mutex
+	StatusCodes     map[int]int
+	ErrorCounts     map[string]int
+	ResponseSamples map[int]string
 }
 
 func NewStats() *Stats {
 	return &Stats{
-		ServiceTime: NewSafeHistogram(),
-		TotalTime:   NewSafeHistogram(),
-		StatusCodes: make(map[int]int),
-		ErrorCounts: make(map[string]int),
+		ServiceTime:     NewSafeHistogram(),
+		TotalTime:       NewSafeHistogram(),
+		StatusCodes:     make(map[int]int),
+		ErrorCounts:     make(map[string]int),
+		ResponseSamples: make(map[int]string),
 	}
 }
 
@@ -52,11 +54,12 @@ func (s *Stats) Reset() {
 
 	s.muCodes.Lock()
 	s.StatusCodes = make(map[int]int)
-	s.ErrorCounts = make(map[string]int) // Reset errors
+	s.ErrorCounts = make(map[string]int)
+	s.ResponseSamples = make(map[int]string)
 	s.muCodes.Unlock()
 }
 
-func (s *Stats) Add(res bool, bytes uint64, service, queue, total time.Duration, code int, errStr string) { // Changed signature
+func (s *Stats) Add(res bool, bytes uint64, service, queue, total time.Duration, code int, errStr string, respBody string) {
 	atomic.AddUint64(&s.Requests, 1)
 	if res {
 		atomic.AddUint64(&s.Success, 1)
@@ -75,6 +78,12 @@ func (s *Stats) Add(res bool, bytes uint64, service, queue, total time.Duration,
 	s.StatusCodes[code]++
 	if errStr != "" {
 		s.ErrorCounts[errStr]++
+	}
+	if code >= 400 && respBody != "" {
+		// Only store one sample per code to save memory
+		if _, exists := s.ResponseSamples[code]; !exists {
+			s.ResponseSamples[code] = respBody
+		}
 	}
 	s.muCodes.Unlock()
 }
@@ -104,6 +113,16 @@ func (s *Stats) GetErrorCounts() map[string]int {
 	defer s.muCodes.Unlock()
 	copy := make(map[string]int)
 	for k, v := range s.ErrorCounts {
+		copy[k] = v
+	}
+	return copy
+}
+
+func (s *Stats) GetResponseSamples() map[int]string {
+	s.muCodes.Lock()
+	defer s.muCodes.Unlock()
+	copy := make(map[int]string)
+	for k, v := range s.ResponseSamples {
 		copy[k] = v
 	}
 	return copy

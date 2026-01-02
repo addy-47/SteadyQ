@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -15,8 +17,12 @@ import (
 
 type RunnerView struct {
 	Inputs  []textinput.Model
+	Headers textarea.Model
+	Body    textarea.Model
 	Focus   int
-	Editing bool // Always true
+	Editing bool
+
+	Viewport viewport.Model
 
 	Width  int
 	Height int
@@ -31,28 +37,27 @@ func (m RunnerView) GetHelp() string {
 		return "The absolute URL where requests will be sent.\nExample: http://localhost:8080/api/v1/health"
 	case FieldMethod:
 		return "The HTTP Method to use.\nSupported: GET, POST, PUT, DELETE, PATCH, HEAD."
+	case FieldHeaders:
+		return "Custom HTTP Headers.\nFormat: Key: Value (one per line).\nExample:\nAuthorization: Bearer abc\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field\n• [Ctrl+N/P] Force Nav"
+	case FieldBody:
+		return "The Request Body.\nUsually JSON or raw text.\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field"
 	case FieldCommand:
-		return "The Shell Command to execute for each 'request'.\n\nTemplate Variables:\n• {{userID}}: Unique UUID for the simulated user.\n• {{chatID}}: Unique UUID for the request context.\n\nExample: curl -X POST http://api.com/chat -d 'user={{userID}}'"
+		return "The Shell Command to execute for each 'request'.\n\nTemplate Variables:\n• {{userID}}: Unique UUID for the simulated user.\n• {{chatID}}: Unique UUID for the request context."
 	case FieldLoadMode:
-		return "Load Generation Mode.\n• [RPS] (Open Loop): Generates requests at a fixed rate, regardless of server response time.\n• [Users] (Closed Loop): Simulates fixed concurrent users. A new request starts only after previous one finishes (+ think time).\n\nPress [Space] to toggle."
+		return "Load Generation Mode.\n• [RPS] (Open Loop): Generates requests at a fixed rate.\n• [Users] (Closed Loop): Simulates fixed concurrent users.\n\nPress [Space] to toggle."
 	case FieldQPS:
-		mode := m.Inputs[FieldLoadMode].Value()
-		if mode == "users" {
-			return "Number of concurrent users (virtual users) to simulate.\nEach user runs sequentially."
+		if m.Inputs[FieldLoadMode].Value() == "users" {
+			return "Number of concurrent users (virtual users) to simulate."
 		}
-		return "Target Requests Per Second (RPS).\nThe engine will attempt to hit this throughput strictly."
+		return "Target Requests Per Second (RPS)."
 	case FieldDuration:
-		return "The duration of the 'Steady State' phase.\nTotal Run Time = RampUp + Duration + RampDown."
+		return "The duration of the 'Steady State' phase."
 	case FieldRampUp:
-		mode := m.Inputs[FieldLoadMode].Value()
-		if mode == "users" {
-			return "Time period (in seconds) to gradually spawn all users.\nPrevents hitting the server with all users at once."
-		}
-		return "Time period (in seconds) to linearly increase RPS from 0 to Target."
+		return "Time period (s) to reach Target (RPS or Users)."
 	case FieldRampDown:
-		return "Time period (in seconds) to linearly decrease RPS from Target to 0.\nUseful for graceful shutdown testing."
+		return "Time period (s) to gracefully decrease RPS to 0."
 	case FieldThinkTime:
-		return "Artificial delay (in milliseconds) between requests for a single user.\nOnly applies in [Users] mode."
+		return "Delay (ms) between requests per user (Users mode only)."
 	}
 	return ""
 }
@@ -60,116 +65,140 @@ func (m RunnerView) GetHelp() string {
 // ... (Constants and NewRunnerView unchanged) ...
 
 func (m RunnerView) View() string {
-	s := strings.Builder{}
-	s.WriteString(styles.Title.Render("🚀 Configure Load Test"))
-	s.WriteString("\n\n")
-
 	reqType := m.Inputs[FieldReqType].Value()
 	loadMode := m.Inputs[FieldLoadMode].Value()
 
-	// Row 0: Request Type
-	s.WriteString(m.renderRow(FieldReqType, -1))
-	s.WriteString("\n")
+	// 1. Left Side: Inputs
+	inputCol := strings.Builder{}
+	inputCol.WriteString("\n") // Top margin
 
-	// Row 1: Details
+	inputCol.WriteString(m.renderInput(FieldReqType))
+	inputCol.WriteString("\n")
+
 	if reqType == "http" {
-		s.WriteString(m.renderRow(FieldURL, FieldMethod)) // URL, Method
+		inputCol.WriteString(m.renderInput(FieldURL))
+		inputCol.WriteString("\n")
+		inputCol.WriteString(m.renderInput(FieldMethod))
+		inputCol.WriteString("\n")
+		inputCol.WriteString(m.renderInput(FieldHeaders))
+		inputCol.WriteString("\n")
+		inputCol.WriteString(m.renderInput(FieldBody))
+		inputCol.WriteString("\n")
 	} else {
-		s.WriteString(m.renderRow(FieldCommand, -1)) // Command
+		inputCol.WriteString(m.renderInput(FieldCommand))
+		inputCol.WriteString("\n")
 	}
-	s.WriteString("\n")
 
-	// Row 2: Load Mode & QPS/Users
-	s.WriteString(m.renderRow(FieldLoadMode, FieldQPS))
-	s.WriteString("\n")
+	inputCol.WriteString(m.renderInput(FieldLoadMode))
+	inputCol.WriteString("\n")
+	inputCol.WriteString(m.renderInput(FieldQPS))
+	inputCol.WriteString("\n")
+	inputCol.WriteString(m.renderInput(FieldDuration))
+	inputCol.WriteString("\n")
+	inputCol.WriteString(m.renderInput(FieldRampUp))
+	inputCol.WriteString("\n")
 
-	// Row 3: Duration & RampUp
-	s.WriteString(m.renderRow(FieldDuration, FieldRampUp))
-	s.WriteString("\n")
-
-	// Row 4: RampDown or ThinkTime
 	if loadMode == "rps" {
-		s.WriteString(m.renderRow(FieldRampDown, -1))
+		inputCol.WriteString(m.renderInput(FieldRampDown))
 	} else {
-		s.WriteString(m.renderRow(FieldThinkTime, -1))
+		inputCol.WriteString(m.renderInput(FieldThinkTime))
 	}
-	s.WriteString("\n\n")
 
-	// Dynamic Help Box
+	// 2. Right Side: Help
+	helpCol := strings.Builder{}
+	helpBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(styles.ColorBorder).
+		Padding(1, 2).
+		Width(45).
+		Height(15) // Fixed height for help or dynamic?
+
+	helpTitle := styles.Subtle.Bold(true).Render("Information")
 	helpContent := m.GetHelp()
-	if helpContent != "" {
-		s.WriteString(styles.Subtle.Render("──────── Information ────────"))
-		s.WriteString("\n")
-		s.WriteString(styles.Text.Foreground(styles.ColorSecondary).Width(70).Render(helpContent))
-	} else {
-		s.WriteString("\n")
-	}
 
-	return s.String()
+	helpCol.WriteString(helpTitle)
+	helpCol.WriteString("\n\n")
+	helpCol.WriteString(styles.Text.Foreground(styles.ColorSecondary).Render(helpContent))
+
+	mainRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(55).Render(inputCol.String()),
+		helpBox.Render(helpCol.String()),
+	)
+
+	// Set viewport content
+	m.Viewport.SetContent(mainRow)
+	return m.Viewport.View()
 }
 
 // Field Indices
 const (
-	FieldReqType = iota // HTTP vs Script
+	FieldReqType = iota
 	FieldURL
 	FieldMethod
+	FieldHeaders
+	FieldBody
 	FieldCommand
-	FieldLoadMode // RPS vs Users
-	FieldQPS      // or NumUsers
+	FieldLoadMode
+	FieldQPS
 	FieldDuration
 	FieldRampUp
 	FieldRampDown
 	FieldThinkTime
-	// Helper
-	FieldNumUsers = FieldQPS // Alias
 )
 
 func NewRunnerView(initialCfg runner.Config) RunnerView {
-	inputs := make([]textinput.Model, 10)
+	inputs := make([]textinput.Model, 12)
 
-	// 0. ReqType
-	inputs[FieldReqType] = textinput.New()
-	if initialCfg.Command != "" {
-		inputs[FieldReqType].SetValue("script")
-	} else {
-		inputs[FieldReqType].SetValue("http")
+	// Base settings for all inputs
+	for i := range inputs {
+		inputs[i] = textinput.New()
+		inputs[i].PromptStyle = styles.Subtle
+		inputs[i].TextStyle = styles.Text
 	}
+
+	inputs[FieldReqType].SetValue(ternary(initialCfg.Command != "", "script", "http"))
 	inputs[FieldReqType].Prompt = "Type (Space): "
 	inputs[FieldReqType].Width = 10
 	inputs[FieldReqType].Focus()
 
-	// 1. URL
-	inputs[FieldURL] = textinput.New()
 	inputs[FieldURL].Placeholder = "http://localhost:8080"
 	inputs[FieldURL].SetValue(initialCfg.URL)
 	inputs[FieldURL].Prompt = "URL: "
-	inputs[FieldURL].Width = 50
+	inputs[FieldURL].Width = 40
 
-	// 2. Method
-	inputs[FieldMethod] = textinput.New()
 	inputs[FieldMethod].Placeholder = "GET"
-	inputs[FieldMethod].SetValue(initialCfg.Method)
+	inputs[FieldMethod].SetValue(ternary(initialCfg.Method != "", initialCfg.Method, "GET"))
 	inputs[FieldMethod].Prompt = "Method: "
 	inputs[FieldMethod].Width = 10
 
-	// 3. Command
-	inputs[FieldCommand] = textinput.New()
+	// TextAreas for Headers and Body
+	hArea := textarea.New()
+	hArea.Placeholder = "Key: Value\nAuthorization: Bearer ..."
+	var hLines []string
+	for k, v := range initialCfg.Headers {
+		hLines = append(hLines, k+": "+v)
+	}
+	hArea.SetValue(strings.Join(hLines, "\n"))
+	hArea.SetWidth(40)
+	hArea.SetHeight(5)
+	hArea.Prompt = ""
+
+	bArea := textarea.New()
+	bArea.Placeholder = "{\n  \"key\": \"value\"\n}"
+	bArea.SetValue(initialCfg.Body)
+	bArea.SetWidth(40)
+	bArea.SetHeight(5)
+	bArea.Prompt = ""
+
 	inputs[FieldCommand].Placeholder = "bash test.sh"
 	inputs[FieldCommand].SetValue(initialCfg.Command)
 	inputs[FieldCommand].Prompt = "Shell Command: "
-	inputs[FieldCommand].Width = 60
+	inputs[FieldCommand].Width = 40
 
-	// 4. LoadMode
-	inputs[FieldLoadMode] = textinput.New()
-	inputs[FieldLoadMode].SetValue(initialCfg.Mode)
-	if initialCfg.Mode == "" {
-		inputs[FieldLoadMode].SetValue("rps")
-	}
+	inputs[FieldLoadMode].SetValue(ternary(initialCfg.Mode != "", initialCfg.Mode, "rps"))
 	inputs[FieldLoadMode].Prompt = "Mode (Space): "
 	inputs[FieldLoadMode].Width = 10
 
-	// 5. QPS / Users
-	inputs[FieldQPS] = textinput.New()
 	if initialCfg.Mode == "users" {
 		inputs[FieldQPS].SetValue(strconv.Itoa(initialCfg.NumUsers))
 		inputs[FieldQPS].Prompt = "Users: "
@@ -179,39 +208,37 @@ func NewRunnerView(initialCfg runner.Config) RunnerView {
 	}
 	inputs[FieldQPS].Width = 10
 
-	// 6. Duration
-	inputs[FieldDuration] = textinput.New()
-	inputs[FieldDuration].Placeholder = "30"
 	inputs[FieldDuration].SetValue(strconv.Itoa(initialCfg.SteadyDur))
 	inputs[FieldDuration].Prompt = "Duration (s): "
 	inputs[FieldDuration].Width = 10
 
-	// 7. RampUp
-	inputs[FieldRampUp] = textinput.New()
-	inputs[FieldRampUp].Placeholder = "0"
 	inputs[FieldRampUp].SetValue(strconv.Itoa(initialCfg.RampUp))
 	inputs[FieldRampUp].Prompt = "Ramp Up (s): "
 	inputs[FieldRampUp].Width = 10
 
-	// 8. RampDown
-	inputs[FieldRampDown] = textinput.New()
-	inputs[FieldRampDown].Placeholder = "0"
 	inputs[FieldRampDown].SetValue(strconv.Itoa(initialCfg.RampDown))
 	inputs[FieldRampDown].Prompt = "Ramp Down (s): "
 	inputs[FieldRampDown].Width = 10
 
-	// 9. ThinkTime
-	inputs[FieldThinkTime] = textinput.New()
-	inputs[FieldThinkTime].Placeholder = "0"
 	inputs[FieldThinkTime].SetValue(strconv.Itoa(int(initialCfg.ThinkTime.Milliseconds())))
 	inputs[FieldThinkTime].Prompt = "Think (ms): "
 	inputs[FieldThinkTime].Width = 10
 
 	return RunnerView{
-		Inputs:  inputs,
-		Focus:   0,
-		Editing: true,
+		Inputs:   inputs,
+		Headers:  hArea,
+		Body:     bArea,
+		Focus:    0,
+		Editing:  true,
+		Viewport: viewport.New(0, 0),
 	}
+}
+
+func ternary(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
 }
 
 func (m RunnerView) Init() tea.Cmd {
@@ -221,16 +248,39 @@ func (m RunnerView) Init() tea.Cmd {
 func (m RunnerView) Update(msg tea.Msg) (RunnerView, tea.Cmd) {
 	reqType := m.Inputs[FieldReqType].Value()
 	loadMode := m.Inputs[FieldLoadMode].Value()
+	var cmds []tea.Cmd
 
 	// Handle Navigation & Toggles
-	if msg, ok := msg.(tea.KeyMsg); ok {
+	isNav := false
+	dir := 0
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
 		switch msg.String() {
-		case "tab", "down", "enter":
-			m.Focus = m.nextFocus(m.Focus, 1, reqType, loadMode)
-			return m.focusCmd()
-		case "shift+tab", "up":
-			m.Focus = m.nextFocus(m.Focus, -1, reqType, loadMode)
-			return m.focusCmd()
+		case "tab", "ctrl+n":
+			isNav = true
+			dir = 1
+		case "shift+tab", "ctrl+p":
+			isNav = true
+			dir = -1
+		case "down":
+			if m.Focus == FieldHeaders || m.Focus == FieldBody {
+				break // Handle internally for multi-line
+			}
+			isNav = true
+			dir = 1
+		case "up":
+			if m.Focus == FieldHeaders || m.Focus == FieldBody {
+				break // Handle internally for multi-line
+			}
+			isNav = true
+			dir = -1
+		case "enter":
+			if m.Focus == FieldHeaders || m.Focus == FieldBody {
+				break // Allow newline
+			}
+			isNav = true
+			dir = 1
 		case " ":
 			if m.Focus == FieldReqType {
 				if reqType == "http" {
@@ -251,13 +301,40 @@ func (m RunnerView) Update(msg tea.Msg) (RunnerView, tea.Cmd) {
 				return m, nil
 			}
 		}
+	case tea.WindowSizeMsg:
+		m.Width = msg.Width
+		m.Height = msg.Height
+		m.Viewport.Width = msg.Width - 4
+		m.Viewport.Height = msg.Height - 8
 	}
 
-	// Update inputs
-	cmds := make([]tea.Cmd, len(m.Inputs))
-	for i := range m.Inputs {
-		m.Inputs[i], cmds[i] = m.Inputs[i].Update(msg)
+	if isNav {
+		m.Focus = m.nextFocus(m.Focus, dir, reqType, loadMode)
+		newM, cmd := m.focusCmd()
+		m = newM
+		cmds = append(cmds, cmd)
+	} else {
+		// Update active component
+		if m.Focus == FieldHeaders {
+			var cmd tea.Cmd
+			m.Headers, cmd = m.Headers.Update(msg)
+			cmds = append(cmds, cmd)
+		} else if m.Focus == FieldBody {
+			var cmd tea.Cmd
+			m.Body, cmd = m.Body.Update(msg)
+			cmds = append(cmds, cmd)
+		} else {
+			for i := range m.Inputs {
+				var cmd tea.Cmd
+				m.Inputs[i], cmd = m.Inputs[i].Update(msg)
+				cmds = append(cmds, cmd)
+			}
+		}
 	}
+
+	var vpCmd tea.Cmd
+	m.Viewport, vpCmd = m.Viewport.Update(msg)
+	cmds = append(cmds, vpCmd)
 
 	return m, tea.Batch(cmds...)
 }
@@ -267,7 +344,7 @@ func (m RunnerView) nextFocus(current, direction int, reqType, loadMode string) 
 	visible := []int{FieldReqType}
 
 	if reqType == "http" {
-		visible = append(visible, FieldURL, FieldMethod)
+		visible = append(visible, FieldURL, FieldMethod, FieldHeaders, FieldBody)
 	} else {
 		visible = append(visible, FieldCommand)
 	}
@@ -302,10 +379,10 @@ func (m RunnerView) nextFocus(current, direction int, reqType, loadMode string) 
 }
 
 func (m RunnerView) focusCmd() (RunnerView, tea.Cmd) {
-	cmds := make([]tea.Cmd, len(m.Inputs))
+	cmds := make([]tea.Cmd, 0)
 	for i := 0; i < len(m.Inputs); i++ {
 		if i == m.Focus {
-			cmds[i] = m.Inputs[i].Focus()
+			cmds = append(cmds, m.Inputs[i].Focus())
 			m.Inputs[i].PromptStyle = styles.Active
 			m.Inputs[i].TextStyle = styles.Text
 		} else {
@@ -314,9 +391,21 @@ func (m RunnerView) focusCmd() (RunnerView, tea.Cmd) {
 			m.Inputs[i].TextStyle = styles.Subtle
 		}
 	}
+
+	if m.Focus == FieldHeaders {
+		cmds = append(cmds, m.Headers.Focus())
+	} else {
+		m.Headers.Blur()
+	}
+
+	if m.Focus == FieldBody {
+		cmds = append(cmds, m.Body.Focus())
+	} else {
+		m.Body.Blur()
+	}
+
 	return m, tea.Batch(cmds...)
 }
-
 
 func (m RunnerView) renderRow(idx1, idx2 int) string {
 	v1 := m.renderInput(idx1)
@@ -332,31 +421,48 @@ func (m RunnerView) renderInput(idx int) string {
 	if idx == m.Focus {
 		style = styles.InputActive
 	}
+
+	if idx == FieldHeaders {
+		return style.Render("Headers:\n" + m.Headers.View())
+	}
+	if idx == FieldBody {
+		return style.Render("Body:\n" + m.Body.View())
+	}
+
 	return style.Render(m.Inputs[idx].View())
 }
 
 func (m RunnerView) GetConfig() runner.Config {
 	reqType := m.Inputs[FieldReqType].Value()
-
 	url := m.Inputs[FieldURL].Value()
 	method := m.Inputs[FieldMethod].Value()
 	cmd := m.Inputs[FieldCommand].Value()
+	body := m.Body.Value()
+
+	// Parse Headers
+	headers := make(map[string]string)
+	hRaw := m.Headers.Value()
+	if hRaw != "" {
+		lines := strings.Split(hRaw, "\n")
+		for _, l := range lines {
+			kv := strings.SplitN(strings.TrimSpace(l), ":", 2)
+			if len(kv) == 2 {
+				headers[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+			}
+		}
+	}
 
 	if reqType == "http" {
 		cmd = ""
-	} else {
-		// Script mode
-		// url/method ignored by runner logic if cmd present
 	}
 
 	mode := m.Inputs[FieldLoadMode].Value()
-	qps, _ := strconv.Atoi(m.Inputs[FieldQPS].Value()) // Reused for users
+	qps, _ := strconv.Atoi(m.Inputs[FieldQPS].Value())
 	dur, _ := strconv.Atoi(m.Inputs[FieldDuration].Value())
 	rup, _ := strconv.Atoi(m.Inputs[FieldRampUp].Value())
 	rdown, _ := strconv.Atoi(m.Inputs[FieldRampDown].Value())
 	think, _ := strconv.Atoi(m.Inputs[FieldThinkTime].Value())
 
-	// QPS input is Users count if mode is users
 	targetRPS := 0
 	numUsers := 1
 	if mode == "users" {
@@ -368,6 +474,8 @@ func (m RunnerView) GetConfig() runner.Config {
 	return runner.Config{
 		URL:        url,
 		Method:     method,
+		Headers:    headers,
+		Body:       body,
 		Command:    cmd,
 		TargetRPS:  targetRPS,
 		SteadyDur:  dur,

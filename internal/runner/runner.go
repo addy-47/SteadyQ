@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,8 +36,9 @@ type StatsSnapshot struct {
 
 	AvgQueueWaitMs float64
 
-	StatusCodes map[int]int
-	ErrorCounts map[string]int
+	StatusCodes     map[int]int
+	ErrorCounts     map[string]int
+	ResponseSamples map[int]string
 }
 
 // StatsUpdateChan is the channel type
@@ -106,20 +106,21 @@ func (r *Runner) StartTickLoop(ctx context.Context, interval time.Duration) {
 func (r *Runner) sendUpdate() {
 	// Create snapshot
 	s := StatsSnapshot{
-		Requests:       atomic.LoadUint64(&r.Stats.Requests),
-		Success:        atomic.LoadUint64(&r.Stats.Success),
-		Fail:           atomic.LoadUint64(&r.Stats.Fail),
-		Bytes:          atomic.LoadUint64(&r.Stats.Bytes),
-		Inflight:       atomic.LoadInt64(&r.inflight),
-		P50ServiceMs:   r.Stats.GetP50Service(),
-		P90ServiceMs:   r.Stats.GetP90Service(),
-		P95ServiceMs:   r.Stats.GetP95Service(),
-		P99ServiceMs:   r.Stats.GetP99Service(),
-		MaxServiceMs:   r.Stats.ServiceTime.Max() / 1000,
-		MeanServiceMs:  r.Stats.ServiceTime.Mean() / 1000,
-		AvgQueueWaitMs: r.Stats.QueueWaitAvgMs(),
-		StatusCodes:    r.Stats.GetStatusCodes(),
-		ErrorCounts:    r.Stats.GetErrorCounts(),
+		Requests:        atomic.LoadUint64(&r.Stats.Requests),
+		Success:         atomic.LoadUint64(&r.Stats.Success),
+		Fail:            atomic.LoadUint64(&r.Stats.Fail),
+		Bytes:           atomic.LoadUint64(&r.Stats.Bytes),
+		Inflight:        atomic.LoadInt64(&r.inflight),
+		P50ServiceMs:    r.Stats.GetP50Service(),
+		P90ServiceMs:    r.Stats.GetP90Service(),
+		P95ServiceMs:    r.Stats.GetP95Service(),
+		P99ServiceMs:    r.Stats.GetP99Service(),
+		MaxServiceMs:    r.Stats.ServiceTime.Max() / 1000,
+		MeanServiceMs:   r.Stats.ServiceTime.Mean() / 1000,
+		AvgQueueWaitMs:  r.Stats.QueueWaitAvgMs(),
+		StatusCodes:     r.Stats.GetStatusCodes(),
+		ErrorCounts:     r.Stats.GetErrorCounts(),
+		ResponseSamples: r.Stats.GetResponseSamples(),
 	}
 
 	// Non-blocking send
@@ -250,7 +251,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 	defer atomic.AddInt64(&r.inflight, -1)
 
 	userID := uuid.New().String()
-	chatID := uuid.New().String()
+	reqID := uuid.New().String()
 
 	var err error
 	var status int
@@ -262,7 +263,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 		cmdStr := r.Cfg.Command
 		// Simple Templating
 		cmdStr = strings.ReplaceAll(cmdStr, "{{userID}}", userID)
-		cmdStr = strings.ReplaceAll(cmdStr, "{{chatID}}", chatID)
+		cmdStr = strings.ReplaceAll(cmdStr, "{{reqID}}", reqID)
 
 		// Execute shell
 		// Using sh -c to allow complex commands
@@ -288,20 +289,47 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 
 	} else {
 		// Standard HTTP Request
-		q := "Why is the sky blue?" // Optimization: Pre-allocate or reuse
-		bodyBytes, _ := json.Marshal(map[string]string{"query": q})
-
 		method := r.Cfg.Method
 		if method == "" {
 			method = "GET"
 		}
 
-		req, _ := http.NewRequest(
-			method,
-			fmt.Sprintf("%s?chatID=%s&userID=%s", r.Cfg.URL, chatID, userID),
-			bytes.NewBuffer(bodyBytes),
-		)
-		req.Header.Set("Content-Type", "application/json")
+		url := r.Cfg.URL
+		url = strings.ReplaceAll(url, "{{userID}}", userID)
+		url = strings.ReplaceAll(url, "{{reqID}}", reqID)
+
+		// Cache busting (if not already present)
+		if !strings.Contains(url, "reqID=") {
+			sep := "?"
+			if strings.Contains(url, "?") {
+				sep = "&"
+			}
+			url = fmt.Sprintf("%s%sreqID=%s&userID=%s", url, sep, reqID, userID)
+		}
+
+		var body io.Reader
+		if r.Cfg.Body != "" {
+			bodyStr := r.Cfg.Body
+			bodyStr = strings.ReplaceAll(bodyStr, "{{userID}}", userID)
+			bodyStr = strings.ReplaceAll(bodyStr, "{{reqID}}", reqID)
+			body = strings.NewReader(bodyStr)
+		}
+
+		req, _ := http.NewRequest(method, url, body)
+
+		// Set Headers with templating
+		hasContentType := false
+		for k, v := range r.Cfg.Headers {
+			val := strings.ReplaceAll(v, "{{userID}}", userID)
+			val = strings.ReplaceAll(val, "{{reqID}}", reqID)
+			req.Header.Set(k, val)
+			if strings.ToLower(k) == "content-type" {
+				hasContentType = true
+			}
+		}
+		if !hasContentType && r.Cfg.Body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
 
 		var resp *http.Response
 		resp, err = r.Client.Do(req)
@@ -310,7 +338,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 			status = resp.StatusCode
 			bytesLen = resp.ContentLength
 
-			if resp.StatusCode >= 300 {
+			if resp.StatusCode >= 400 {
 				b, _ := io.ReadAll(resp.Body)
 				respBody = string(b)
 			}
@@ -344,7 +372,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 
 	errStr := ""
 	if err != nil {
-		errStr = err.Error()
+		errStr = cleanError(err)
 	}
 
 	r.Stats.Add(
@@ -355,6 +383,7 @@ func (r *Runner) executeRequest(scheduledTime time.Time) {
 		res.Latency,
 		res.Status,
 		errStr,
+		respBody,
 	)
 
 	r.mu.Lock()
@@ -387,4 +416,24 @@ func (r *Runner) getCurrentRPS(elapsedSec float64) float64 {
 
 func (r *Runner) GetInflight() int64 {
 	return atomic.LoadInt64(&r.inflight)
+}
+
+func cleanError(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+
+	// Strip common redundant prefixes from net/http errors
+	// Example: Get "http://localhost:8080": dial tcp [::1]:8080: connect: connection refused
+	// We want to skip the URL part if possible.
+	if idx := strings.LastIndex(s, ": "); idx != -1 {
+		// Try to find the last part which is usually the actual root cause
+		// but only if it's a network-like error.
+		if strings.Contains(s, "dial") || strings.Contains(s, "timeout") || strings.Contains(s, "connect") {
+			return s[idx+2:]
+		}
+	}
+
+	return s
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -29,6 +30,7 @@ var (
 	rampUp   int
 	rampDown int
 	timeout  int
+	headers  []string
 )
 
 var rootCmd = &cobra.Command{
@@ -82,6 +84,7 @@ func init() {
 	rootCmd.Flags().IntVar(&rampUp, "ramp-up", 0, "Ramp Up duration in seconds")
 	rootCmd.Flags().IntVar(&rampDown, "ramp-down", 0, "Ramp Down duration in seconds")
 	rootCmd.Flags().IntVar(&timeout, "timeout", 10, "Request timeout in seconds")
+	rootCmd.Flags().StringSliceVarP(&headers, "header", "H", []string{}, "HTTP Header (e.g. \"Key: Value\")")
 }
 
 func initConfig() {
@@ -138,6 +141,15 @@ func runHeadless() {
 	if users > 0 {
 		cfg.Mode = "users"
 		cfg.NumUsers = users
+	}
+
+	// Parse Headers
+	cfg.Headers = make(map[string]string)
+	for _, h := range headers {
+		parts := strings.SplitN(h, ":", 2)
+		if len(parts) == 2 {
+			cfg.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
 	}
 
 	cli.Start(cfg)
