@@ -9,10 +9,11 @@ SteadyQ is a modern, TUI-based load testing tool designed for developers who nee
 - **Interactive TUI**: Built with Bubble Tea for a terminal-based UI experience.
 - **Dual Request Types**:
   - **HTTP**: Standard GET/POST requests with custom headers and body support.
-  - **Script**: Execute any shell command with template variables (`{{userID}}`, `{{chatID}}`).
+  - **Script**: Execute any shell command with template variables (`{{userID}}`, `{{uuid}}`).
 - **Flexible Load Modes**:
   - **RPS (Open Loop)**: Target a specific Requests Per Second with linear ramp-up/down.
   - **Users (Closed Loop)**: Simulate fixed concurrent users with think time between requests.
+- **Native Template Engine**: High-performance dynamic data injection (`randomLine`, `randomInt`, `uuid`) without script overhead.
 - **Real-time Dashboard**: Visualize latency, throughput, errors, and response codes live.
 - **CLI Mode**: Headless execution for CI/CD pipelines and automation.
 - **Export Capabilities**: Export results to CSV and JSON formats.
@@ -100,7 +101,37 @@ The Dashboard view offers comprehensive real-time monitoring with:
 ### Request Types
 
 - **HTTP**: Standard GET/POST requests with URL, method, and body configuration.
-- **Script**: Execute any shell command. Use `{{userID}}` and `{{chatID}}` as placeholders for unique identifiers.
+- **Script**: Execute any shell command.
+
+### 🧩 Native Template Engine
+
+SteadyQ includes a high-performance template engine (Go `text/template`) that works in **URL**, **Headers**, **Body**, and **Shell Commands**.
+
+#### Variables
+
+| Variable     | Description                                                                                |
+| :----------- | :----------------------------------------------------------------------------------------- |
+| `{{userID}}` | **Stable ID**. Unique UUID for the Virtual User. Persists across requests in "Users" mode. |
+| `{{uuid}}`   | **Fresh ID**. A random UUID v4 generated for **every single request**.                     |
+
+#### Functions
+
+| Function       | Usage                       | Description                                                                         |
+| :------------- | :-------------------------- | :---------------------------------------------------------------------------------- |
+| `randomLine`   | `{{randomLine "file.txt"}}` | Picks a random line from a file. The file is cached in memory for high performance. |
+| `randomInt`    | `{{randomInt 1 100}}`       | Generates a random integer between min (inclusive) and max (exclusive).             |
+| `randomChoice` | `{{randomChoice "A" "B"}}`  | Randomly selects one of the provided arguments.                                     |
+| `randomUUID`   | `{{randomUUID}}`            | Generates a random UUID (same as `{{uuid}}`).                                       |
+
+**Example:**
+
+```json
+{
+  "query": "{{randomLine "questions.txt"}}",
+  "id": {{randomInt 1000 9999}},
+  "trace_id": "{{uuid}}"
+}
+```
 
 ### Load Modes
 
@@ -109,34 +140,38 @@ The Dashboard view offers comprehensive real-time monitoring with:
 
 ### CLI Flags
 
-| Flag           | Short | Description                          | Default |
-| :------------- | :---- | :----------------------------------- | :------ |
-| `--url`        | `-u`  | Target URL                           | -       |
-| `--method`     | `-X`  | HTTP Method                          | GET     |
-| `--body`       | `-b`  | Request Body                         | -       |
-| `--rate`       | `-r`  | Target RPS (Open Loop)               | 10      |
-| `--users`      | `-U`  | Target Users (Closed Loop)           | 0       |
-| `--duration`   | `-d`  | Duration in seconds                  | 10      |
-| `--ramp-up`    | -     | Ramp Up duration in seconds          | 0       |
-| `--ramp-down`  | -     | Ramp Down duration in seconds        | 0       |
-| `--timeout`    | -     | Request timeout in seconds           | 10      |
-| `--think-time` | -     | Think time in milliseconds (Users mode) | 0    |
+| Flag           | Short | Description                             | Default |
+| :------------- | :---- | :-------------------------------------- | :------ |
+| `--url`        | `-u`  | Target URL                              | -       |
+| `--method`     | `-X`  | HTTP Method                             | GET     |
+| `--body`       | `-b`  | Request Body                            | -       |
+| `--rate`       | `-r`  | Target RPS (Open Loop)                  | 10      |
+| `--users`      | `-U`  | Target Users (Closed Loop)              | 0       |
+| `--duration`   | `-d`  | Duration in seconds                     | 10      |
+| `--ramp-up`    | -     | Ramp Up duration in seconds             | 0       |
+| `--ramp-down`  | -     | Ramp Down duration in seconds           | 0       |
+| `--timeout`    | -     | Request timeout in seconds              | 10      |
+| `--think-time` | -     | Think time in milliseconds (Users mode) | 0       |
 
 ### Examples
 
-```bash
 # HTTP GET with ramp-up
+
 steadyq --url http://localhost:8080/health --rate 100 --duration 60 --ramp-up 10
 
-# POST request with body
-steadyq --url http://localhost:8080/api --method POST --body '{"query":"test"}' --rate 50
+# Dynamic Data Integration (Native)
+
+steadyq --url http://localhost:8080/search --method POST \
+ --body '{"q": "{{randomLine "queries.txt"}}", "id": {{randomInt 1 100}}}' \
+ --rate 50
 
 # Users mode with think time
+
 steadyq --url http://localhost:8080/api --users 20 --duration 30 --think-time 500
 
 # Custom shell command
-steadyq --command "curl -X POST http://api.com/chat -d 'user={{userID}}&chat={{chatID}}'" --rate 25
-```
+
+steadyq --command "curl -X POST http://api.com/chat -d 'user={{userID}}&trace={{uuid}}'" --rate 25
 
 ## 📊 Metrics
 

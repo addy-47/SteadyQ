@@ -30,34 +30,36 @@ type RunnerView struct {
 
 // Add GetHelp method
 func (m RunnerView) GetHelp() string {
+	tmplHelp := "\n\nTemplate Engine:\n• {{userID}}: Stable Virtual User ID\n• {{uuid}}: Fresh Random UUID v4\n• {{randomInt min max}}\n• {{randomLine \"file.txt\"}}\n• {{randomChoice \"A\" \"B\"}}"
+
 	switch m.Focus {
 	case FieldReqType:
 		return "Request Type determines how load is generated.\n• [HTTP]: Standard HTTP/1.1 requests.\n• [Script]: Execute a local shell command for every request.\n\nPress [Space] to toggle."
 	case FieldURL:
-		return "The absolute URL where requests will be sent.\nExample: http://localhost:8080/api/v1/health"
+		return "The absolute URL where requests will be sent.\nExample: http://localhost:8080/api/v1/health" + tmplHelp
 	case FieldMethod:
 		return "The HTTP Method to use.\nSupported: GET, POST, PUT, DELETE, PATCH, HEAD."
 	case FieldHeaders:
-		return "Custom HTTP Headers.\nFormat: Key: Value (one per line).\nExample:\nAuthorization: Bearer abc\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field\n• [Ctrl+N/P] Force Nav"
+		return "Custom HTTP Headers.\nFormat: Key: Value (one per line).\nExample:\nAuthorization: Bearer {{uuid}}\nContent-Type: application/json\n\nSupports Template Engine."
 	case FieldBody:
-		return "The Request Body.\nUsually JSON or raw text.\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field"
+		return "The Request Body.\nUsually JSON or raw text.\n\nSupports full Template Engine functions:\n• {{randomInt 10 100}}\n• {{randomLine \"data.txt\"}}\n• {{randomChoice \"red\" \"blue\"}}\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field"
 	case FieldCommand:
-		return "The Shell Command to execute for each 'request'.\n\nTemplate Variables:\n• {{userID}}: Stable ID for the Virtual User (persists across requests).\n• {{uuid}}: A fresh, random UUID v4 (36-character string) generated for every request."
+		return "The Shell Command to execute for each 'request'.\nExample: ./test.sh {{userID}} {{uuid}}\n\nSupports all Template Engine functions."
 	case FieldLoadMode:
 		return "Load Generation Mode.\n• [RPS] (Open Loop): Generates requests at a fixed rate.\n• [Users] (Closed Loop): Simulates fixed concurrent users.\n\nPress [Space] to toggle."
 	case FieldRPS:
 		if m.Inputs[FieldLoadMode].Value() == "users" {
-			return "Number of concurrent users (virtual users) to simulate."
+			return "Number of concurrent users (virtual users) to simulate , each user will generate requests at a fixed rate which is defined in the think time field."
 		}
-		return "Target Requests Per Second (RPS)."
+		return "Target Requests Per Second (RPS) implies number of requests / curls being sent every second by the system."
 	case FieldDuration:
-		return "The duration of the 'Steady State' phase."
+		return "The duration of the 'Steady State' phase (in seconds).\nThis is the period where load is maintained at the Target level.\n\nTotal Test Duration = Ramp Up + Steady State + Ramp Down."
 	case FieldRampUp:
-		return "Time period (s) to reach Target (RPS or Users)."
+		return "Time period (s) to gradually increase load from 0 to Target.\nEssential for warming up caches and JIT compilers, preventing cold-start spikes."
 	case FieldRampDown:
-		return "Time period (s) to gracefully decrease RPS to 0."
+		return "Time period (s) to gracefully decrease load from Target to 0.\nAllows pending requests to complete and connections to close cleanly."
 	case FieldThinkTime:
-		return "Delay (ms) between requests per user (Users mode only)."
+		return "Delay (ms) between requests for each Virtual User.\n\nSimulates real user reading/processing time.\nCycle Time = Request Latency + Think Time."
 	}
 	return ""
 }

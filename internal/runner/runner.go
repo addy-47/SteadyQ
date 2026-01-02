@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"text/template"
 	"time"
 
 	"steadyq/internal/stats"
@@ -54,6 +56,13 @@ type Runner struct {
 
 	// Event Channel
 	Updates StatsUpdateChan
+
+	// Template Engine
+	TmplEngine *TemplateEngine
+	TmplURL    *template.Template
+	TmplBody   *template.Template
+	TmplCmd    *template.Template
+	TmplHeader map[string]*template.Template
 }
 
 func NewRunner(cfg Config, updates StatsUpdateChan) *Runner {
@@ -131,6 +140,43 @@ func (r *Runner) sendUpdate() {
 }
 
 func (r *Runner) Run(ctx context.Context) {
+	// Initialize Template Engine
+	r.TmplEngine = NewTemplateEngine()
+	var err error
+
+	// Parse URL
+	r.TmplURL, err = r.TmplEngine.Parse("url", r.Cfg.URL)
+	if err != nil {
+		fmt.Printf("Error parsing URL template: %v\n", err) // Should probably log better
+	}
+
+	// Parse Body
+	if r.Cfg.Body != "" {
+		r.TmplBody, err = r.TmplEngine.Parse("body", r.Cfg.Body)
+		if err != nil {
+			fmt.Printf("Error parsing Body template: %v\n", err)
+		}
+	}
+
+	// Parse Command
+	if r.Cfg.Command != "" {
+		r.TmplCmd, err = r.TmplEngine.Parse("cmd", r.Cfg.Command)
+		if err != nil {
+			fmt.Printf("Error parsing Command template: %v\n", err)
+		}
+	}
+
+	// Parse Headers
+	r.TmplHeader = make(map[string]*template.Template)
+	for k, v := range r.Cfg.Headers {
+		t, err := r.TmplEngine.Parse("header-"+k, v)
+		if err != nil {
+			fmt.Printf("Error parsing Header '%s' template: %v\n", k, err)
+		} else {
+			r.TmplHeader[k] = t
+		}
+	}
+
 	// Start Tick Loop for UI
 	r.StartTickLoop(ctx, 100*time.Millisecond)
 
@@ -141,14 +187,20 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-func (r *Runner) applyTemplates(input, userID, requestUUID string) string {
-	if input == "" {
+// applyTemplates executes the pre-parsed templates
+// Note: We changed signature to take *Template, not string input
+func (r *Runner) applyTemplates(t *template.Template, userID, requestUUID string) string {
+	if t == nil {
 		return ""
 	}
-	s := input
-	s = strings.ReplaceAll(s, "{{userID}}", userID)
-	s = strings.ReplaceAll(s, "{{uuid}}", requestUUID)
-	return s
+	out, err := r.TmplEngine.Execute(t, TemplateData{
+		UserID: userID,
+		UUID:   requestUUID,
+	})
+	if err != nil {
+		return "" // Fail gracefully?
+	}
+	return out
 }
 
 // ... rest of the runUsers/runRPS logic ...
@@ -276,7 +328,13 @@ func (r *Runner) executeRequest(scheduledTime time.Time, userID string) {
 
 	if r.Cfg.Command != "" {
 		// Custom Script Execution
-		cmdStr := r.applyTemplates(r.Cfg.Command, userID, reqID)
+		// We use TmplCmd if available, otherwise fallback to raw string (shouldn't happen if parsed)
+		cmdStr := ""
+		if r.TmplCmd != nil {
+			cmdStr = r.applyTemplates(r.TmplCmd, userID, reqID)
+		} else {
+			cmdStr = r.Cfg.Command
+		}
 
 		// Execute shell
 		// Using sh -c to allow complex commands
@@ -307,12 +365,19 @@ func (r *Runner) executeRequest(scheduledTime time.Time, userID string) {
 			method = "GET"
 		}
 
-		url := r.applyTemplates(r.Cfg.URL, userID, reqID)
+		url := ""
+		if r.TmplURL != nil {
+			url = r.applyTemplates(r.TmplURL, userID, reqID)
+		} else {
+			url = r.Cfg.URL
+		}
 
 		var body io.Reader
-		if r.Cfg.Body != "" {
-			bodyStr := r.applyTemplates(r.Cfg.Body, userID, reqID)
+		if r.Cfg.Body != "" && r.TmplBody != nil {
+			bodyStr := r.applyTemplates(r.TmplBody, userID, reqID)
 			body = strings.NewReader(bodyStr)
+		} else if r.Cfg.Body != "" {
+			body = strings.NewReader(r.Cfg.Body)
 		}
 
 		req, _ := http.NewRequest(method, url, body)
@@ -320,7 +385,10 @@ func (r *Runner) executeRequest(scheduledTime time.Time, userID string) {
 		// Set Headers with templating
 		hasContentType := false
 		for k, v := range r.Cfg.Headers {
-			val := r.applyTemplates(v, userID, reqID)
+			val := v
+			if t, ok := r.TmplHeader[k]; ok {
+				val = r.applyTemplates(t, userID, reqID)
+			}
 			req.Header.Set(k, val)
 			if strings.ToLower(k) == "content-type" {
 				hasContentType = true
