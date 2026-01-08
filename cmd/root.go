@@ -126,6 +126,17 @@ func runTUI() {
 }
 
 func runHeadless() {
+	// Handle Body: Check for @filename
+	if strings.HasPrefix(body, "@") {
+		fname := strings.TrimPrefix(body, "@")
+		content, err := os.ReadFile(fname)
+		if err != nil {
+			fmt.Printf("Error reading body file '%s': %v\n", fname, err)
+			os.Exit(1)
+		}
+		body = string(content)
+	}
+
 	// Construct config from flags
 	cfg := runner.Config{
 		URL:        url,

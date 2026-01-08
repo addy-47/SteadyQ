@@ -16,6 +16,7 @@ import (
 // TemplateEngine handles parsing and executing templates
 type TemplateEngine struct {
 	fileCache map[string][]string
+	rawCache  map[string]string // Cache for raw file contents
 	mu        sync.RWMutex
 	funcMap   template.FuncMap
 }
@@ -30,6 +31,7 @@ type TemplateData struct {
 func NewTemplateEngine() *TemplateEngine {
 	e := &TemplateEngine{
 		fileCache: make(map[string][]string),
+		rawCache:  make(map[string]string),
 	}
 
 	e.funcMap = template.FuncMap{
@@ -37,6 +39,8 @@ func NewTemplateEngine() *TemplateEngine {
 		"randomUUID":   e.randomUUID,
 		"randomChoice": e.randomChoice,
 		"randomLine":   e.randomLine,
+		"readFile":     e.readFile,
+		"printf":       fmt.Sprintf,
 		"uuid":         e.randomUUID, // Alias
 	}
 
@@ -131,4 +135,31 @@ func (e *TemplateEngine) randomLine(filename string) (string, error) {
 	}
 
 	return loaded[rand.Intn(len(loaded))], nil
+}
+
+func (e *TemplateEngine) readFile(filename string) (string, error) {
+	e.mu.RLock()
+	content, ok := e.rawCache[filename]
+	e.mu.RUnlock()
+
+	if ok {
+		return content, nil
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Double check
+	if content, ok = e.rawCache[filename]; ok {
+		return content, nil
+	}
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file '%s': %w", filename, err)
+	}
+
+	s := string(data)
+	e.rawCache[filename] = s
+	return s, nil
 }

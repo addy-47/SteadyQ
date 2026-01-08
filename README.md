@@ -116,12 +116,14 @@ SteadyQ includes a high-performance template engine (Go `text/template`) that wo
 
 #### Functions
 
-| Function       | Usage                       | Description                                                                         |
-| :------------- | :-------------------------- | :---------------------------------------------------------------------------------- |
-| `randomLine`   | `{{randomLine "file.txt"}}` | Picks a random line from a file. The file is cached in memory for high performance. |
-| `randomInt`    | `{{randomInt 1 100}}`       | Generates a random integer between min (inclusive) and max (exclusive).             |
-| `randomChoice` | `{{randomChoice "A" "B"}}`  | Randomly selects one of the provided arguments.                                     |
-| `randomUUID`   | `{{randomUUID}}`            | Generates a random UUID (same as `{{uuid}}`).                                       |
+| Function       | Usage                         | Description                                                        |
+| :------------- | :---------------------------- | :----------------------------------------------------------------- |
+| `randomLine`   | `{{randomLine "file.txt"}}`   | Picks a random line from a file.                                   |
+| `readFile`     | `{{readFile "payload.json"}}` | Reads the entire content of a file. Optimized with memory caching. |
+| `printf`       | `{{printf "p%d.json" 5}}`     | Standard format string function.                                   |
+| `randomInt`    | `{{randomInt 1 100}}`         | Generates a random integer (min inclusive, max exclusive).         |
+| `randomChoice` | `{{randomChoice "A" "B"}}`    | Randomly selects one of the provided arguments.                    |
+| `randomUUID`   | `{{randomUUID}}`              | Generates a random UUID (same as `{{uuid}}`).                      |
 
 **Example:**
 
@@ -131,6 +133,13 @@ SteadyQ includes a high-performance template engine (Go `text/template`) that wo
   "id": {{randomInt 1000 9999}},
   "trace_id": "{{uuid}}"
 }
+```
+
+**Dynamic File Payload Example:**
+To pick a random payload from `payload1.json` to `payload70.json`:
+
+```text
+{{readFile (printf "payload%d.json" (randomInt 1 71))}}
 ```
 
 ### Load Modes
