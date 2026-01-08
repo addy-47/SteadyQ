@@ -152,7 +152,12 @@ func (r *Runner) Run(ctx context.Context) {
 
 	// Parse Body
 	if r.Cfg.Body != "" {
-		r.TmplBody, err = r.TmplEngine.Parse("body", r.Cfg.Body)
+		bodyText := r.Cfg.Body
+		if strings.HasPrefix(bodyText, "@") {
+			fname := strings.TrimPrefix(bodyText, "@")
+			bodyText = fmt.Sprintf("{{readFile %q}}", fname)
+		}
+		r.TmplBody, err = r.TmplEngine.Parse("body", bodyText)
 		if err != nil {
 			fmt.Printf("Error parsing Body template: %v\n", err)
 		}

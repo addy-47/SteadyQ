@@ -42,7 +42,7 @@ func (m RunnerView) GetHelp() string {
 	case FieldHeaders:
 		return "Custom HTTP Headers.\nFormat: Key: Value (one per line).\nExample:\nAuthorization: Bearer {{uuid}}\nContent-Type: application/json\n\nSupports Template Engine."
 	case FieldBody:
-		return "The Request Body.\nUsually JSON or raw text.\n\nSupports full Template Engine functions:\n• {{randomInt 10 100}}\n• {{randomLine \"data.txt\"}}\n• {{randomChoice \"red\" \"blue\"}}\n\nNavigation:\n• [Tab] Next Field\n• [Arrows] Line navigation\n• [Down] (at end) Next field"
+		return "The Request Body.\nUsually JSON or raw text.\n\nShortcuts:\n• @filename: Load body from file\n\nSupports full Template Engine:\n• {{randomInt 10 100}}\n• {{readFile \"data.json\"}}\n\nNavigation:\n• [Tab] Next Field"
 	case FieldCommand:
 		return "The Shell Command to execute for each 'request'.\nExample: ./test.sh {{userID}} {{uuid}}\n\nSupports all Template Engine functions."
 	case FieldLoadMode:
