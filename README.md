@@ -211,27 +211,58 @@ Export test results for further analysis:
 
 ## 🚀 Advanced Usage
 
-### Custom Shell Commands
+### 📉 Dynamic Data & Randomized Payloads
 
-Execute complex load testing scenarios with shell commands:
+SteadyQ excels at generating non-static load. Below are the three primary strategies for dynamic payloads.
+
+#### 1. Native File Orchestration (High Performance)
+
+Use this when you have a pool of JSON files (e.g., `payload1.json` to `payload70.json`) and want to pick one randomly for every request without OS overhead.
+
+**Command:**
 
 ```bash
-# Test with authentication
-steadyq --command "curl -H 'Authorization: Bearer token' http://api.com/protected" --rate 100
-
-# Database load test
-steadyq --command "psql -c 'SELECT * FROM users WHERE id={{userID}}'" --users 50
+steadyq --url http://api.com/extract \
+  --method POST \
+  --body '{{readFile (printf "public/payload%d.json" (randomInt 1 71))}}'
 ```
 
-### Ramp Profiles
+- **How it works**: SteadyQ parses the template, generates a random number, constructs the path, and reads the file.
+- **Efficiency**: Files are cached in memory after the first read.
 
-Configure sophisticated load patterns:
+#### 2. External File Loading (`@` Syntax)
+
+Directly load a static file as the request body. Supports both relative and absolute paths.
+
+**Command:**
 
 ```bash
-# Gradual ramp-up and ramp-down
+# Relative path
+steadyq --url http://api.com/upload --body @data.json
+
+# Absolute path
+steadyq --url http://api.com/upload --body @/home/user/test/payload.json
+```
+
+#### 3. Script Mode Randomization (Maximum Flexibility)
+
+If you need complex logic (like selecting files based on system state), use Script mode to execute shell logic per request.
+
+**Command:**
+
+```bash
+steadyq --command 'num=$((1 + RANDOM % 70)); curl $URL --data-binary @payload$num.json' --rate 50
+```
+
+### 📈 Ramp Profiles
+
+Configure sophisticated load patterns to test system elasticity:
+
+```bash
+# Gradual ramp-up and ramp-down (30s each)
 steadyq --url http://localhost:8080/api --rate 200 --duration 120 --ramp-up 30 --ramp-down 30
 
-# Instant load with gradual shutdown
+# Instant stress with gradual cooldown
 steadyq --url http://localhost:8080/api --rate 100 --duration 60 --ramp-down 20
 ```
 
