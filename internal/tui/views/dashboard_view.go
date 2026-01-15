@@ -116,8 +116,10 @@ func (m DashboardView) View() string {
 	}
 
 	// Determine Phase
-	phase := "Steady State"
-	if m.Duration > 0 { // Only calculate phase if duration is set
+	phase := ""
+	status := "RUNNING"
+
+	if !m.StartTime.IsZero() {
 		rupEnd := time.Duration(m.Config.RampUp) * time.Second
 		steadyEnd := rupEnd + time.Duration(m.Config.SteadyDur)*time.Second
 
@@ -125,12 +127,31 @@ func (m DashboardView) View() string {
 			phase = "Ramp Up"
 		} else if elapsed > steadyEnd {
 			phase = "Ramp Down"
+		} else {
+			phase = "Steady State"
 		}
+
+		if elapsed >= m.Duration {
+			if m.Stats.Inflight > 0 {
+				status = "DRAINING"
+				phase = "Waiting for inflight"
+			} else {
+				status = "FINISHED"
+				phase = "Test Complete"
+			}
+		}
+	}
+
+	statusColor := styles.Active
+	if status == "DRAINING" {
+		statusColor = styles.Warn
+	} else if status == "FINISHED" {
+		statusColor = styles.Subtle
 	}
 
 	timer := fmt.Sprintf("%s / %s", elapsed.Round(time.Second), remaining.Round(time.Second))
 	header := lipgloss.JoinHorizontal(lipgloss.Center,
-		styles.Title.Render("⚡ Testing in Progress"),
+		statusColor.Bold(true).Render("● "+status),
 		lipgloss.NewStyle().MarginLeft(2).Foreground(styles.ColorSubtle).Render(timer),
 		lipgloss.NewStyle().MarginLeft(4).Foreground(styles.ColorPrimary).Bold(true).Render("["+phase+"]"),
 	)

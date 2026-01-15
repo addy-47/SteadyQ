@@ -52,7 +52,7 @@ type Runner struct {
 	Results []ExperimentResult
 	mu      sync.Mutex
 
-	inflight int64
+	Inflight int64
 
 	// Event Channel
 	Updates StatsUpdateChan
@@ -95,14 +95,15 @@ func NewRunner(cfg Config, updates StatsUpdateChan) *Runner {
 	}
 }
 
-// StartTickLoop starts a goroutine that pushes stats updates
-func (r *Runner) StartTickLoop(ctx context.Context, interval time.Duration) {
+// StartTickLoop starts a goroutine that pushes stats updates until stop channel is closed
+func (r *Runner) StartTickLoop(stop chan struct{}, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-stop:
+				r.sendUpdate() // One final update
 				return
 			case <-ticker.C:
 				r.sendUpdate()
@@ -118,7 +119,7 @@ func (r *Runner) sendUpdate() {
 		Success:         atomic.LoadUint64(&r.Stats.Success),
 		Fail:            atomic.LoadUint64(&r.Stats.Fail),
 		Bytes:           atomic.LoadUint64(&r.Stats.Bytes),
-		Inflight:        atomic.LoadInt64(&r.inflight),
+		Inflight:        atomic.LoadInt64(&r.Inflight),
 		P50ServiceMs:    r.Stats.GetP50Service(),
 		P90ServiceMs:    r.Stats.GetP90Service(),
 		P95ServiceMs:    r.Stats.GetP95Service(),
@@ -183,7 +184,9 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 
 	// Start Tick Loop for UI
-	r.StartTickLoop(ctx, 100*time.Millisecond)
+	stopTicker := make(chan struct{})
+	r.StartTickLoop(stopTicker, 100*time.Millisecond)
+	defer close(stopTicker)
 
 	if r.Cfg.Mode == "users" {
 		r.runUsers(ctx)
@@ -321,8 +324,8 @@ func (r *Runner) executeRequest(scheduledTime time.Time, userID string) {
 		queueWait = 0
 	}
 
-	atomic.AddInt64(&r.inflight, 1)
-	defer atomic.AddInt64(&r.inflight, -1)
+	atomic.AddInt64(&r.Inflight, 1)
+	defer atomic.AddInt64(&r.Inflight, -1)
 
 	reqID := uuid.New().String()
 
@@ -487,7 +490,7 @@ func (r *Runner) getCurrentRPS(elapsedSec float64) float64 {
 }
 
 func (r *Runner) GetInflight() int64 {
-	return atomic.LoadInt64(&r.inflight)
+	return atomic.LoadInt64(&r.Inflight)
 }
 
 func cleanError(err error) string {

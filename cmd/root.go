@@ -21,16 +21,17 @@ var (
 	cfgFile string
 
 	// CLI Flags
-	url      string
-	method   string
-	body     string
-	rate     int
-	users    int
-	duration int
-	rampUp   int
-	rampDown int
-	timeout  int
-	headers  []string
+	url       string
+	method    string
+	body      string
+	rate      int
+	users     int
+	duration  int
+	rampUp    int
+	rampDown  int
+	timeout   int
+	headers   []string
+	outPrefix string
 )
 
 var rootCmd = &cobra.Command{
@@ -85,6 +86,7 @@ func init() {
 	rootCmd.Flags().IntVar(&rampDown, "ramp-down", 0, "Ramp Down duration in seconds")
 	rootCmd.Flags().IntVar(&timeout, "timeout", 10, "Request timeout in seconds")
 	rootCmd.Flags().StringSliceVarP(&headers, "header", "H", []string{}, "HTTP Header (e.g. \"Key: Value\")")
+	rootCmd.Flags().StringVarP(&outPrefix, "out", "o", "", "Output filename prefix for auto-reporting")
 }
 
 func initConfig() {
@@ -137,6 +139,7 @@ func runHeadless() {
 		RampDown:   rampDown,
 		TimeoutSec: timeout,
 		Mode:       "rps",
+		OutPrefix:  outPrefix,
 	}
 	if users > 0 {
 		cfg.Mode = "users"

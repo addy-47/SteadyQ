@@ -23,6 +23,9 @@ type Config struct {
 
 	// Custom Scripting
 	Command string // Shell command to execute per request (overrides URL/Method)
+
+	// Reporting
+	OutPrefix string // Prefix for auto-report generation
 }
 
 type ExperimentResult struct {

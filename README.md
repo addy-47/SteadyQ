@@ -49,8 +49,8 @@ steadyq
 Execute load tests from command line for automation:
 
 ```bash
-# Basic HTTP test
-steadyq --url http://localhost:8080/api --method GET --rate 100 --duration 30
+# Basic HTTP test with auto-reporting
+steadyq --url http://localhost:8080/api --rate 100 --duration 30 --out test_results
 
 # Users mode with think time
 steadyq --url http://localhost:8080/api --users 50 --duration 60 --think-time 100
@@ -161,6 +161,7 @@ To pick a random payload from `payload1.json` to `payload70.json`:
 | `--ramp-down`  | -     | Ramp Down duration in seconds           | 0       |
 | `--timeout`    | -     | Request timeout in seconds              | 10      |
 | `--think-time` | -     | Think time in milliseconds (Users mode) | 0       |
+| `--out`        | `-o`  | Output filename prefix for reporting    | -       |
 
 ### Examples
 
@@ -198,7 +199,8 @@ Export test results for further analysis:
 
 ```bash
 # Results are automatically exported when using Ctrl+P in dashboard
-# Files generated: steadyq_report_{timestamp}.{csv,json}
+# or by using the --out flag in Headless mode.
+# Files generated: {prefix}.{csv,json} and {prefix}_summary.{json,csv}
 ```
 
 ## 🎨 Interface Features

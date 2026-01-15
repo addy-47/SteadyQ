@@ -186,7 +186,7 @@ func NewRunnerView(initialCfg runner.Config) RunnerView {
 	hArea.Prompt = ""
 
 	bArea := textarea.New()
-	bArea.Placeholder = "{\n  \"key\": \"value\"\n}"
+	bArea.Placeholder = "{\n  \"query\": \"{{randomLine \\\"data.txt\\\"}}\"\n}\nOR @filename"
 	bArea.SetValue(initialCfg.Body)
 	bArea.SetWidth(40)
 	bArea.SetHeight(5)

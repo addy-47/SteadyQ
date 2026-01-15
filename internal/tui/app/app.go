@@ -38,6 +38,7 @@ type Model struct {
 
 	// Core State
 	RunActive bool
+	Draining  bool
 	RunCtx    context.Context // To cancel run
 	RunCancel context.CancelFunc
 
@@ -177,13 +178,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Check for Completion (Time based)
 		elapsed := time.Since(m.DashView.StartTime)
-		if m.RunActive && elapsed >= m.DashView.Duration {
-			// Test finished naturally
-			m.RunActive = false
+		if m.RunActive && !m.Draining && elapsed >= m.DashView.Duration {
+			// Phase 1: Stop Generation (Drain)
+			m.Draining = true
 			if m.RunCancel != nil {
 				m.RunCancel()
 			}
+			m.StatusMsg = "Stopping load... waiting for inflight requests to finish."
+		}
+
+		if m.Draining && snap.Inflight == 0 {
+			// Phase 2: Fully Stopped
+			m.RunActive = false
+			m.Draining = false
 			m.StatusMsg = "Test Completed."
+			cmds = append(cmds, clearStatusCmd())
 		}
 
 		cmds = append(cmds, waitForUpdate(m.Updates))
@@ -216,6 +225,7 @@ func (m *Model) startRun(cfg runner.Config) {
 	m.RunCtx = ctx
 	m.RunCancel = cancel
 	m.RunActive = true
+	m.Draining = false
 
 	// totalDur calculated in NewDashboardView
 	m.DashView = views.NewDashboardView(cfg, m.Width, m.Height-6)
